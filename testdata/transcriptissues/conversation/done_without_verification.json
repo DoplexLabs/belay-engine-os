@@ -1,0 +1,189 @@
+{
+  "cases": [
+    {
+      "name": "final completion claim includes deterministic later opening complaint cost",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "done-positive",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-01T11:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Implement the requested behavior."
+              }
+            },
+            {
+              "occurred_at": "2026-09-01T11:01:00Z",
+              "role": "tool_call",
+              "tool_name": "apply_patch",
+              "input_tokens": 80,
+              "output_tokens": 20,
+              "cost_usd": 0.1,
+              "payload": {
+                "tool_input": {
+                  "file_path": "internal/worker.go",
+                  "patch": "*** Update File: internal/worker.go\n@@\n"
+                }
+              }
+            },
+            {
+              "occurred_at": "2026-09-01T11:02:00Z",
+              "role": "assistant",
+              "input_tokens": 160,
+              "output_tokens": 40,
+              "cost_usd": 0.2,
+              "payload": {
+                "text": "Implemented the requested change. Done."
+              }
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "session_key": "done-positive-complaint",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-02T09:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "No, this still fails when the queue is empty."
+              }
+            },
+            {
+              "occurred_at": "2026-09-02T09:01:00Z",
+              "role": "assistant",
+              "input_tokens": 240,
+              "output_tokens": 60,
+              "cost_usd": 0.3,
+              "payload": {
+                "text": "I will inspect the empty queue path."
+              }
+            },
+            {
+              "occurred_at": "2026-09-02T09:02:00Z",
+              "role": "tool_call",
+              "tool_name": "exec_command",
+              "payload": {
+                "raw_command": "rg empty internal"
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 1,
+      "want_wasted_tokens": 300,
+      "want_excerpt": "No, this still fails when the queue is empty.",
+      "want_min_excerpts": 4
+    },
+    {
+      "name": "package script verification suppresses the completion claim",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "done-negative",
+            "agent": "claude-code"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-03T11:00:00Z",
+              "role": "tool_call",
+              "tool_name": "write_file",
+              "input_tokens": 50,
+              "output_tokens": 10,
+              "cost_usd": 0.06,
+              "payload": {
+                "tool_input": {
+                  "path": "src/index.ts",
+                  "content": "export const ready = true"
+                }
+              }
+            },
+            {
+              "occurred_at": "2026-09-03T11:01:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "input_tokens": 100,
+              "output_tokens": 20,
+              "cost_usd": 0.12,
+              "payload": {
+                "raw_command": "pnpm run check",
+                "tool_result": "Checks completed successfully.",
+                "exit_code": 0
+              }
+            },
+            {
+              "occurred_at": "2026-09-03T11:02:00Z",
+              "role": "assistant",
+              "input_tokens": 70,
+              "output_tokens": 30,
+              "cost_usd": 0.1,
+              "payload": {
+                "text": "Implementation complete."
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 0,
+      "want_wasted_tokens": 0,
+      "want_min_excerpts": 0
+    },
+    {
+      "name": "completion for a later non-code task does not attach to a stale edit",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "done-stale-edit",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-04T11:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Update the worker."
+              }
+            },
+            {
+              "occurred_at": "2026-09-04T11:01:00Z",
+              "role": "tool_call",
+              "tool_name": "apply_patch",
+              "payload": {
+                "tool_input": {
+                  "file_path": "internal/worker.go",
+                  "patch": "*** Update File: internal/worker.go\n@@\n"
+                }
+              }
+            },
+            {
+              "occurred_at": "2026-09-04T11:02:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Now create the tracking tickets."
+              }
+            },
+            {
+              "occurred_at": "2026-09-04T11:03:00Z",
+              "role": "assistant",
+              "input_tokens": 100,
+              "output_tokens": 20,
+              "cost_usd": 0.12,
+              "payload": {
+                "text": "Done — all tracking tickets were created."
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 0,
+      "want_wasted_tokens": 0,
+      "want_min_excerpts": 0
+    }
+  ]
+}

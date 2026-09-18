@@ -1,0 +1,61 @@
+{
+  "contract_version": "belay.numbat-mapping.v1",
+  "upstream": {
+    "repository": "https://github.com/perplexityai/numbat",
+    "commit": "f0778c09dc48281aa93a3887d05096c0a1f3f9f7",
+    "schema_version": "0.3.0",
+    "release_exception": true
+  },
+  "adapter_version": "numbat-0.3.0/v1",
+  "record_routing": {
+    "event": "canonical_event",
+    "finding": "local_finding",
+    "scan_summary": "import_summary",
+    "diagnostic": "diagnostic",
+    "indicator": "ignore",
+    "enforcement": "reject"
+  },
+  "event_types": {
+    "session.start": { "allowed_value_fields": [], "content_policy": "drop" },
+    "session.end": { "allowed_value_fields": [], "content_policy": "drop" },
+    "prompt.user": { "allowed_value_fields": ["content", "content_bytes", "content_truncated"], "content_policy": "drop" },
+    "message.assistant": { "allowed_value_fields": ["content", "content_bytes", "content_truncated"], "content_policy": "drop" },
+    "message.reasoning": { "allowed_value_fields": ["content", "content_bytes", "content_truncated"], "content_policy": "drop" },
+    "tool.call": { "allowed_value_fields": ["tool_name", "tool_call_id", "mcp_server", "mcp_tool", "url", "file_path", "decision"], "content_policy": "allowlisted_metadata_only" },
+    "tool.result": { "allowed_value_fields": ["tool_name", "tool_call_id", "mcp_server", "mcp_tool", "decision"], "content_policy": "drop" },
+    "command.exec": { "allowed_value_fields": ["command", "tool_name", "tool_call_id", "decision"], "content_policy": "allowlisted_metadata_only" },
+    "command.result": { "allowed_value_fields": ["command", "tool_name", "tool_call_id", "exit_code", "duration_ms", "decision"], "content_policy": "allowlisted_metadata_only" },
+    "file.read": { "allowed_value_fields": ["file_path", "tool_name", "tool_call_id", "decision"], "content_policy": "allowlisted_metadata_only" },
+    "file.write": { "allowed_value_fields": ["file_path", "tool_name", "tool_call_id", "decision", "diff_sha256", "diff_bytes"], "content_policy": "allowlisted_metadata_only" },
+    "file.delete": { "allowed_value_fields": ["file_path", "tool_name", "tool_call_id", "diff_sha256", "diff_bytes"], "content_policy": "allowlisted_metadata_only" },
+    "permission.requested": { "allowed_value_fields": ["tool_name", "tool_call_id", "decision", "approval_required", "approval_decision", "approval_reason"], "content_policy": "drop" },
+    "permission.approved": { "allowed_value_fields": ["tool_name", "tool_call_id", "decision", "approval_required", "approval_decision", "approval_reason"], "content_policy": "drop" },
+    "permission.denied": { "allowed_value_fields": ["tool_name", "tool_call_id", "decision", "approval_required", "approval_decision", "approval_reason"], "content_policy": "drop" },
+    "config.agent": { "allowed_value_fields": [], "content_policy": "allowlisted_metadata_only" },
+    "config.mcp": { "allowed_value_fields": ["mcp_server", "mcp_tool"], "content_policy": "allowlisted_metadata_only" },
+    "network.indicator": { "allowed_value_fields": ["url", "tool_name", "mcp_server", "mcp_tool", "tool_call_id", "decision"], "content_policy": "allowlisted_metadata_only" }
+  },
+  "prohibited_fields": [
+    "endpoint.hostname",
+    "endpoint.username",
+    "endpoint.uid",
+    "endpoint.device_id",
+    "content_preview",
+    "content",
+    "approval_reason",
+    "evidence.local_path",
+    "project_path",
+    "observed_content_preview",
+    "raw_prompt",
+    "completion",
+    "reasoning",
+    "file_content",
+    "diff",
+    "stdout",
+    "stderr",
+    "environment",
+    "url.query",
+    "url.fragment",
+    "url.userinfo"
+  ]
+}

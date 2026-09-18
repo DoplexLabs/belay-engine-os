@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.doplex.ai/belay/ingest/v1/acknowledgement.schema.json",
+  "title": "Belay Teams ingest acknowledgement v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "batch_id",
+    "accepted",
+    "duplicates",
+    "acknowledged_watermark"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "accepted": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 500
+    },
+    "duplicates": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 500
+    },
+    "acknowledged_watermark": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

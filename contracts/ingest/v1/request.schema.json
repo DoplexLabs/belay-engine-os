@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.doplex.ai/belay/ingest/v1/request.schema.json",
+  "title": "Belay Teams ingest request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "batch_id",
+    "client_watermark",
+    "events"
+  ],
+  "properties": {
+    "schema_version": { "const": "belay.ingest.v1" },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "client_watermark": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "$ref": "https://schemas.doplex.ai/belay/event/v1/event.schema.json"
+      }
+    }
+  }
+}

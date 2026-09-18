@@ -1,0 +1,137 @@
+{
+  "cases": [
+    {
+      "name": "marker corrections become observations while short user turns remain candidates",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "correction-positive-a",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-01T10:00:00Z",
+              "role": "assistant",
+              "input_tokens": 100,
+              "output_tokens": 20,
+              "cost_usd": 0.12,
+              "payload": {
+                "text": "I will add a new parser implementation."
+              }
+            },
+            {
+              "occurred_at": "2026-09-01T10:01:00Z",
+              "role": "user",
+              "payload": {
+                "text": "No, use the existing parser helper instead."
+              }
+            },
+            {
+              "occurred_at": "2026-09-01T10:02:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Please continue."
+              }
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "session_key": "correction-positive-b",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-02T10:00:00Z",
+              "role": "assistant",
+              "input_tokens": 125,
+              "output_tokens": 25,
+              "cost_usd": 0.15,
+              "payload": {
+                "text": "I am creating another parser implementation."
+              }
+            },
+            {
+              "occurred_at": "2026-09-02T10:01:00Z",
+              "role": "user",
+              "payload": {
+                "text": "No, use the existing parser helper instead."
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 2,
+      "want_candidates": 3,
+      "want_marker_candidates": 2,
+      "want_wasted_tokens": 270,
+      "want_excerpt": "No, use the existing parser helper instead.",
+      "want_min_excerpts": 2
+    },
+    {
+      "name": "long neutral guidance is excluded and short neutral text is candidate only",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "correction-negative",
+            "agent": "claude-code"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-03T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Please review the architecture notes carefully and describe the data flow through every component with attention to ownership boundaries, lifecycle behavior, storage semantics, deterministic ordering, test coverage, operational constraints, deployment sequencing, migration safety, observability expectations, compatibility guarantees, and the documented acceptance criteria for this project."
+              }
+            },
+            {
+              "occurred_at": "2026-09-03T10:01:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Thanks for the update."
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 0,
+      "want_candidates": 1,
+      "want_marker_candidates": 0,
+      "want_wasted_tokens": 0,
+      "want_min_excerpts": 0
+    },
+    {
+      "name": "marker candidate without an immediately preceding assistant emits no observation",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "correction-false-positive",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-04T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Please continue with the review."
+              }
+            },
+            {
+              "occurred_at": "2026-09-04T10:01:00Z",
+              "role": "user",
+              "payload": {
+                "text": "No, keep the existing parser helper and preserve its current call sites, error handling, deterministic ordering, test coverage, compatibility behavior, naming conventions, package boundaries, fixture layout, and documented ownership model while making only the narrowly requested detector correction in this change."
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 0,
+      "want_candidates": 2,
+      "want_marker_candidates": 1,
+      "want_unobserved_marker_candidates": 1,
+      "want_wasted_tokens": 0,
+      "want_min_excerpts": 0
+    }
+  ]
+}

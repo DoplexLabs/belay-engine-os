@@ -1,0 +1,10 @@
+DROP TRIGGER IF EXISTS main.events_no_update;
+DROP TRIGGER IF EXISTS main.events_no_delete;
+DROP TRIGGER IF EXISTS main.findings_no_update;
+DROP TRIGGER IF EXISTS main.findings_no_delete;
+DROP TRIGGER IF EXISTS main.issue_occurrences_guard_update;
+DROP TRIGGER IF EXISTS main.issue_occurrences_guard_delete;
+DROP TRIGGER IF EXISTS main.session_analysis_revisions_guard_update;
+DROP TRIGGER IF EXISTS main.session_analysis_revisions_guard_delete;
+DROP TRIGGER IF EXISTS main.analysis_diagnostics_guard_update;
+DROP TRIGGER IF EXISTS main.analysis_diagnostics_guard_delete;

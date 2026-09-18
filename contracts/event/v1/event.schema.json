@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.doplex.ai/belay/event/v1/event.schema.json",
+  "title": "Belay canonical event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "installation_id",
+    "occurred_at",
+    "observed_at",
+    "source",
+    "session",
+    "observation",
+    "coverage",
+    "redaction",
+    "historical"
+  ],
+  "properties": {
+    "schema_version": { "const": "belay.event.v1" },
+    "event_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "installation_id": {
+      "type": "string",
+      "pattern": "^inst_[A-Za-z0-9_-]{8,128}$"
+    },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "source": { "$ref": "#/$defs/source" },
+    "session": { "$ref": "#/$defs/session" },
+    "observation": { "$ref": "#/$defs/observation" },
+    "coverage": { "$ref": "#/$defs/coverage" },
+    "redaction": { "$ref": "#/$defs/redaction" },
+    "historical": { "$ref": "#/$defs/historical" }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "engine_version",
+        "schema_version",
+        "record_type",
+        "record_id",
+        "kind",
+        "agent",
+        "adapter_version",
+        "deduplication_key",
+        "sequence"
+      ],
+      "properties": {
+        "engine": { "const": "numbat" },
+        "engine_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "schema_version": { "const": "0.3.0" },
+        "record_type": { "const": "event" },
+        "run_id": { "type": "string", "maxLength": 256 },
+        "record_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "kind": { "enum": ["artifact", "hook", "otel"] },
+        "agent": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "adapter_version": { "const": "numbat-0.3.0/v1" },
+        "deduplication_key": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "sequence": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^ses_[a-f0-9]{32}$"
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "actor", "action", "outcome"],
+      "properties": {
+        "type": {
+          "enum": [
+            "session.start",
+            "session.end",
+            "prompt.user",
+            "message.assistant",
+            "message.reasoning",
+            "tool.call",
+            "tool.result",
+            "command.exec",
+            "command.result",
+            "file.read",
+            "file.write",
+            "file.delete",
+            "permission.requested",
+            "permission.approved",
+            "permission.denied",
+            "config.agent",
+            "config.mcp",
+            "network.indicator"
+          ]
+        },
+        "actor": { "enum": ["user", "assistant", "system", "tool", "unknown"] },
+        "action": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "outcome": { "enum": ["succeeded", "failed", "interrupted", "unknown"] },
+        "exit_code": { "type": "integer" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "summary": { "type": "string", "maxLength": 512 },
+        "resource": { "$ref": "#/$defs/resource" },
+        "details": { "$ref": "#/$defs/details" }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": {
+          "enum": ["command", "file", "tool", "mcp", "network", "agent", "session"]
+        },
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool_call_id": { "type": "string", "maxLength": 256 },
+        "decision": { "enum": ["allowed", "denied", "asked"] },
+        "approval_required": { "type": "boolean" },
+        "approval_decision": { "enum": ["allowed", "denied", "asked"] },
+        "mcp_server": { "type": "string", "maxLength": 128 },
+        "mcp_tool": { "type": "string", "maxLength": 128 },
+        "model": { "type": "string", "maxLength": 128 },
+        "model_provider": { "type": "string", "maxLength": 128 },
+        "cli_version": { "type": "string", "maxLength": 64 },
+        "sub_agent": { "type": "string", "maxLength": 128 },
+        "diff_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "diff_bytes": { "type": "integer", "minimum": 0 },
+        "tags": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_.:-]{1,64}$"
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["depth", "confidence"],
+      "properties": {
+        "depth": {
+          "enum": ["artifact", "lifecycle", "tool_call", "synchronous_hook", "otlp"]
+        },
+        "confidence": { "enum": ["high", "medium", "low"] }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_version", "fields_removed", "secrets_removed"],
+      "properties": {
+        "policy_version": { "const": "belay.redaction.v1" },
+        "fields_removed": { "type": "integer", "minimum": 0 },
+        "secrets_removed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "historical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["is_historical"],
+      "properties": {
+        "is_historical": { "type": "boolean" },
+        "reconstruction_source": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "is_historical": { "const": true }
+            },
+            "required": ["is_historical"]
+          },
+          "then": {
+            "required": ["reconstruction_source"],
+            "properties": {
+              "reconstruction_source": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

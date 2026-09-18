@@ -1,0 +1,161 @@
+{
+  "cases": [
+    {
+      "name": "retry loop true positive",
+      "want": "retry_loop",
+      "sessions": [
+        {
+          "key": "ses_retry_true",
+          "agent": "codex",
+          "turns": [
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./pkg/123", "call_id": "r1"},
+            {"role": "tool_result", "result": "Error: /tmp/run-1 failed on port 4312", "exit_code": 1, "call_id": "r1", "input_tokens": 20, "output_tokens": 5, "cost_usd": 0.01},
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./pkg/456", "call_id": "r2"},
+            {"role": "tool_result", "result": "Error: /tmp/run-2 failed on port 9921", "exit_code": 1, "call_id": "r2", "input_tokens": 20, "output_tokens": 5, "cost_usd": 0.01},
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./pkg/789", "call_id": "r3"},
+            {"role": "tool_result", "result": "Error: /tmp/run-3 failed on port 8080", "exit_code": 1, "call_id": "r3", "input_tokens": 20, "output_tokens": 5, "cost_usd": 0.01}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "retry loop deliberate false positive",
+      "not_want": "retry_loop",
+      "sessions": [
+        {
+          "key": "ses_retry_false",
+          "agent": "codex",
+          "turns": [
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./pkg/123", "call_id": "rf1"},
+            {"role": "tool_result", "result": "Error: package failed", "exit_code": 1, "call_id": "rf1"},
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./pkg/456", "call_id": "rf2"},
+            {"role": "tool_result", "result": "Error: package failed", "exit_code": 1, "call_id": "rf2"},
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./pkg/789", "call_id": "rf3"},
+            {"role": "tool_result", "result": "ok", "exit_code": 0, "call_id": "rf3"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "recurring error true positive",
+      "want": "recurring_error",
+      "sessions": [
+        {
+          "key": "ses_error_a",
+          "agent": "claude-code",
+          "turns": [
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./a", "call_id": "e1"},
+            {"role": "tool_result", "result": "fatal: /workspace/a/file.go:42 not found", "exit_code": 1, "call_id": "e1", "input_tokens": 10, "output_tokens": 2, "cost_usd": 0.02}
+          ]
+        },
+        {
+          "key": "ses_error_b",
+          "agent": "claude-code",
+          "turns": [
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./b", "call_id": "e2"},
+            {"role": "tool_result", "result": "fatal: /workspace/b/file.go:77 not found", "exit_code": 1, "call_id": "e2", "input_tokens": 10, "output_tokens": 2, "cost_usd": 0.02}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "recurring error deliberate false positive",
+      "not_want": "recurring_error",
+      "sessions": [
+        {
+          "key": "ses_error_false_a",
+          "agent": "claude-code",
+          "turns": [
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./a", "call_id": "ef1"},
+            {"role": "tool_result", "result": "fatal: dependency not found", "exit_code": 1, "call_id": "ef1"}
+          ]
+        },
+        {
+          "key": "ses_error_false_b",
+          "agent": "claude-code",
+          "turns": [
+            {"role": "tool_call", "tool": "Bash", "command": "go test ./b", "call_id": "ef2"},
+            {"role": "tool_result", "result": "panic: nil pointer", "exit_code": 1, "call_id": "ef2"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "permission churn true positive",
+      "want": "permission_churn",
+      "sessions": [
+        {
+          "key": "ses_permission_true",
+          "agent": "claude-code",
+          "turns": [
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 1"},
+            {"role": "user", "text": "yes"},
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 2"},
+            {"role": "user", "text": "approve"},
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 3"},
+            {"role": "user", "text": "continue"},
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 4"},
+            {"role": "user", "text": "go ahead"},
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 5"},
+            {"role": "user", "text": "allowed"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "permission churn deliberate false positive",
+      "not_want": "permission_churn",
+      "sessions": [
+        {
+          "key": "ses_permission_false",
+          "agent": "claude-code",
+          "turns": [
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 1"},
+            {"role": "user", "text": "yes"},
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 2"},
+            {"role": "user", "text": "approve"},
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 3"},
+            {"role": "user", "text": "no"},
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 4"},
+            {"role": "user", "text": "continue"},
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 5"},
+            {"role": "user", "text": "allowed"},
+            {"role": "tool_call", "tool": "Bash", "command": "deploy --env 6"},
+            {"role": "user", "text": "yes"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "file thrash true positive",
+      "want": "file_thrash",
+      "sessions": [
+        {
+          "key": "ses_file_true",
+          "agent": "codex",
+          "turns": [
+            {"role": "tool_call", "tool": "Edit", "file": "internal/app.go", "content": "A", "input_tokens": 5, "cost_usd": 0.01},
+            {"role": "tool_call", "tool": "Edit", "file": "internal/app.go", "content": "B", "input_tokens": 5, "cost_usd": 0.01},
+            {"role": "tool_call", "tool": "Edit", "file": "internal/app.go", "content": "C", "input_tokens": 5, "cost_usd": 0.01},
+            {"role": "tool_call", "tool": "Edit", "file": "internal/app.go", "content": "D", "input_tokens": 5, "cost_usd": 0.01}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "file thrash deliberate false positive",
+      "not_want": "file_thrash",
+      "sessions": [
+        {
+          "key": "ses_file_false",
+          "agent": "codex",
+          "turns": [
+            {"role": "tool_call", "tool": "Edit", "file": "internal/app.go", "content": "A"},
+            {"role": "tool_call", "tool": "Edit", "file": "internal/app.go", "content": "B"},
+            {"role": "tool_call", "tool": "Edit", "file": "internal/app.go", "content": "C"}
+          ]
+        }
+      ]
+    }
+  ]
+}

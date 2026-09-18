@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.doplex.ai/belay/numbat/v0.3.0/mapping.schema.json",
+  "title": "Belay Numbat mapping metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "upstream",
+    "adapter_version",
+    "record_routing",
+    "event_types",
+    "prohibited_fields"
+  ],
+  "properties": {
+    "contract_version": { "const": "belay.numbat-mapping.v1" },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "schema_version", "release_exception"],
+      "properties": {
+        "repository": { "const": "https://github.com/perplexityai/numbat" },
+        "commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "schema_version": { "const": "0.3.0" },
+        "release_exception": { "type": "boolean" }
+      }
+    },
+    "adapter_version": { "const": "numbat-0.3.0/v1" },
+    "record_routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "enum": ["canonical_event", "local_finding", "import_summary", "diagnostic", "ignore", "reject"]
+        },
+        "finding": {
+          "enum": ["canonical_event", "local_finding", "import_summary", "diagnostic", "ignore", "reject"]
+        },
+        "scan_summary": {
+          "enum": ["canonical_event", "local_finding", "import_summary", "diagnostic", "ignore", "reject"]
+        },
+        "diagnostic": {
+          "enum": ["canonical_event", "local_finding", "import_summary", "diagnostic", "ignore", "reject"]
+        },
+        "indicator": {
+          "enum": ["canonical_event", "local_finding", "import_summary", "diagnostic", "ignore", "reject"]
+        },
+        "enforcement": {
+          "enum": ["canonical_event", "local_finding", "import_summary", "diagnostic", "ignore", "reject"]
+        }
+      },
+      "required": ["event", "finding", "scan_summary", "diagnostic", "indicator", "enforcement"]
+    },
+    "event_types": {
+      "type": "object",
+      "minProperties": 18,
+      "maxProperties": 18,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["allowed_value_fields", "content_policy"],
+        "properties": {
+          "allowed_value_fields": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "content_policy": { "enum": ["drop", "allowlisted_metadata_only"] }
+        }
+      }
+    },
+    "prohibited_fields": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

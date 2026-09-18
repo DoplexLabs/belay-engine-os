@@ -1,0 +1,307 @@
+{
+  "cases": [
+    {
+      "name": "cold starts exceed project share across five sessions",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "cold-positive-a",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-08-25T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Please continue the project work."
+              }
+            },
+            {
+              "occurred_at": "2026-08-25T10:01:00Z",
+              "role": "assistant",
+              "input_tokens": 240,
+              "output_tokens": 60,
+              "cost_usd": 0.3,
+              "payload": {
+                "text": "I am reviewing the repository structure and project conventions."
+              }
+            },
+            {
+              "occurred_at": "2026-08-25T10:02:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "input_tokens": 560,
+              "output_tokens": 140,
+              "cost_usd": 0.7,
+              "payload": {
+                "raw_command": "go test ./...",
+                "tool_result": "ok",
+                "exit_code": 0
+              }
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "session_key": "cold-positive-b",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-08-26T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Please continue the project work."
+              }
+            },
+            {
+              "occurred_at": "2026-08-26T10:01:00Z",
+              "role": "assistant",
+              "input_tokens": 240,
+              "output_tokens": 60,
+              "cost_usd": 0.3,
+              "payload": {
+                "text": "I am reviewing the repository structure and project conventions."
+              }
+            },
+            {
+              "occurred_at": "2026-08-26T10:02:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "input_tokens": 560,
+              "output_tokens": 140,
+              "cost_usd": 0.7,
+              "payload": {
+                "raw_command": "go test ./...",
+                "tool_result": "ok",
+                "exit_code": 0
+              }
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "session_key": "cold-positive-c",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-08-27T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Please continue the project work."
+              }
+            },
+            {
+              "occurred_at": "2026-08-27T10:01:00Z",
+              "role": "assistant",
+              "input_tokens": 240,
+              "output_tokens": 60,
+              "cost_usd": 0.3,
+              "payload": {
+                "text": "I am reviewing the repository structure and project conventions."
+              }
+            },
+            {
+              "occurred_at": "2026-08-27T10:02:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "input_tokens": 560,
+              "output_tokens": 140,
+              "cost_usd": 0.7,
+              "payload": {
+                "raw_command": "go test ./...",
+                "tool_result": "ok",
+                "exit_code": 0
+              }
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "session_key": "cold-positive-d",
+            "agent": "claude-code"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-08-28T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Please continue the project work."
+              }
+            },
+            {
+              "occurred_at": "2026-08-28T10:01:00Z",
+              "role": "assistant",
+              "input_tokens": 240,
+              "output_tokens": 60,
+              "cost_usd": 0.3,
+              "payload": {
+                "text": "I am reviewing the repository structure and project conventions."
+              }
+            },
+            {
+              "occurred_at": "2026-08-28T10:02:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "input_tokens": 560,
+              "output_tokens": 140,
+              "cost_usd": 0.7,
+              "payload": {
+                "raw_command": "go test ./...",
+                "tool_result": "ok",
+                "exit_code": 0
+              }
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "session_key": "cold-positive-e",
+            "agent": "claude-code"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-08-29T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Please continue the project work."
+              }
+            },
+            {
+              "occurred_at": "2026-08-29T10:01:00Z",
+              "role": "assistant",
+              "input_tokens": 240,
+              "output_tokens": 60,
+              "cost_usd": 0.3,
+              "payload": {
+                "text": "I am reviewing the repository structure and project conventions."
+              }
+            },
+            {
+              "occurred_at": "2026-08-29T10:02:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "input_tokens": 560,
+              "output_tokens": 140,
+              "cost_usd": 0.7,
+              "payload": {
+                "raw_command": "go test ./...",
+                "tool_result": "ok",
+                "exit_code": 0
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 5,
+      "want_wasted_tokens": 1500,
+      "want_excerpt": "I am reviewing the repository structure and project conventions.",
+      "want_min_excerpts": 3
+    },
+    {
+      "name": "high startup share across only four sessions is below recurrence floor",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "cold-negative-a",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-08-30T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Orient to this repository."
+              }
+            },
+            {
+              "occurred_at": "2026-08-30T10:01:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "payload": {
+                "raw_command": "rg --files",
+                "tool_result": "files"
+              }
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "session_key": "cold-negative-b",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-08-31T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Orient to this repository."
+              }
+            },
+            {
+              "occurred_at": "2026-08-31T10:01:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "payload": {
+                "raw_command": "rg --files",
+                "tool_result": "files"
+              }
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "session_key": "cold-negative-c",
+            "agent": "claude-code"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-01T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Orient to this repository."
+              }
+            },
+            {
+              "occurred_at": "2026-09-01T10:01:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "payload": {
+                "raw_command": "rg --files",
+                "tool_result": "files"
+              }
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "session_key": "cold-negative-d",
+            "agent": "claude-code"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-02T10:00:00Z",
+              "role": "user",
+              "payload": {
+                "text": "Orient to this repository."
+              }
+            },
+            {
+              "occurred_at": "2026-09-02T10:01:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "payload": {
+                "raw_command": "rg --files",
+                "tool_result": "files"
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 0,
+      "want_wasted_tokens": 0,
+      "want_min_excerpts": 0
+    }
+  ]
+}

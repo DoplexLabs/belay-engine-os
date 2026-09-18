@@ -1,0 +1,108 @@
+{
+  "cases": [
+    {
+      "name": "failed verification after compaction remains incomplete",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "compaction-positive",
+            "agent": "codex"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-04T10:00:00Z",
+              "role": "tool_call",
+              "tool_name": "apply_patch",
+              "input_tokens": 40,
+              "output_tokens": 10,
+              "cost_usd": 0.05,
+              "payload": {
+                "tool_input": {
+                  "file_path": "internal/store.go",
+                  "patch": "*** Update File: internal/store.go\n@@\n"
+                }
+              }
+            },
+            {
+              "occurred_at": "2026-09-04T10:01:00Z",
+              "role": "compaction_summary",
+              "input_tokens": 40,
+              "output_tokens": 10,
+              "cost_usd": 0.05,
+              "payload": {
+                "text": "Work remains on the storage edge case."
+              }
+            },
+            {
+              "occurred_at": "2026-09-04T10:02:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "input_tokens": 80,
+              "output_tokens": 20,
+              "cost_usd": 0.1,
+              "payload": {
+                "raw_command": "go test ./internal/store",
+                "tool_result": "FAIL internal/store",
+                "exit_code": 1
+              }
+            },
+            {
+              "occurred_at": "2026-09-04T10:03:00Z",
+              "role": "assistant",
+              "input_tokens": 40,
+              "output_tokens": 10,
+              "cost_usd": 0.05,
+              "payload": {
+                "text": "The verification failed and more work is required."
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 1,
+      "want_wasted_tokens": 200,
+      "want_excerpt": "go test ./internal/store",
+      "want_min_excerpts": 4
+    },
+    {
+      "name": "successful package script verification after compaction suppresses issue",
+      "sessions": [
+        {
+          "metadata": {
+            "session_key": "compaction-negative",
+            "agent": "claude-code"
+          },
+          "turns": [
+            {
+              "occurred_at": "2026-09-05T10:00:00Z",
+              "role": "compaction_summary",
+              "payload": {
+                "text": "Continue by running the project verification."
+              }
+            },
+            {
+              "occurred_at": "2026-09-05T10:01:00Z",
+              "role": "tool_result",
+              "tool_name": "exec_command",
+              "payload": {
+                "raw_command": "npm test",
+                "tool_result": "All tests passed.",
+                "exit_code": 0
+              }
+            },
+            {
+              "occurred_at": "2026-09-05T10:02:00Z",
+              "role": "assistant",
+              "payload": {
+                "text": "Tests passed and the change is complete."
+              }
+            }
+          ]
+        }
+      ],
+      "want_observations": 0,
+      "want_wasted_tokens": 0,
+      "want_min_excerpts": 0
+    }
+  ]
+}

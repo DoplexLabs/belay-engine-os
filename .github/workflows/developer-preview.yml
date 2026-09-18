@@ -1,0 +1,118 @@
+name: developer-alpha
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Developer Alpha version label
+        required: true
+        default: 0.0.1-alpha.8
+        type: string
+      publish:
+        description: Publish the verified archive as an unsigned prerelease
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  ALPHA_VERSION: ${{ inputs.version }}
+
+jobs:
+  build:
+    name: Validate unsigned Apple Silicon alpha
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Require native Apple Silicon runner
+        run: |
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Validate scripts
+        run: |
+          grep -F "readonly DEFAULT_VERSION=\"${ALPHA_VERSION}\"" scripts/install.sh
+          bash -n scripts/build-developer-preview.sh
+          bash -n scripts/smoke-developer-preview.sh
+          bash -n scripts/alpha-readiness.sh
+          bash -n scripts/validate-alpha-surface.sh
+          scripts/validate-alpha-surface.sh
+
+      - name: Test
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build Apple Silicon alpha archive
+        run: |
+          scripts/build-developer-preview.sh \
+            --arch arm64 \
+            --version "${ALPHA_VERSION}" \
+            --output-dir dist
+
+      - name: Verify archive checksum
+        run: |
+          (
+            cd dist
+            shasum -a 256 -c \
+              "belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz.sha256"
+          )
+
+      - name: Smoke-test Apple Silicon archive
+        run: |
+          scripts/smoke-developer-preview.sh \
+            "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz"
+
+      - name: Publish unsigned GitHub prerelease
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.BELAY_PUBLIC_RELEASE_TOKEN }}
+        run: |
+          cat > "${RUNNER_TEMP}/release-notes.md" <<EOF
+          Belay Local ${ALPHA_VERSION} for Apple Silicon macOS.
+
+          This external alpha is unsigned and unnotarized. It is intended for
+          informed testers who explicitly accept that limitation.
+
+          Install:
+
+          \`\`\`bash
+          curl -fsSL https://getbelay.vercel.app/install | bash
+          \`\`\`
+
+          Belay keeps agent session content on-device and requires no account.
+          Optional fixed-field usage telemetry and public release checks can
+          be disabled independently.
+          EOF
+          gh release create "v${ALPHA_VERSION}" \
+            --repo DoplexLabs/belay \
+            --prerelease \
+            --target main \
+            --title "Belay Local ${ALPHA_VERSION}" \
+            --notes-file "${RUNNER_TEMP}/release-notes.md" \
+            "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz" \
+            "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz.sha256" \
+            "scripts/install.sh"
+
+      - name: Upload short-lived workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: belay-local-developer-alpha
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 3

@@ -1,0 +1,180 @@
+name: signed-alpha-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Alpha version label
+        required: true
+        default: 0.0.1-alpha.8
+        type: string
+      publish:
+        description: Publish a GitHub prerelease after every gate passes
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  ALPHA_VERSION: ${{ inputs.version }}
+
+jobs:
+  release:
+    name: Sign, notarize, verify, and optionally publish
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Require release credentials
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          test -n "${APPLE_CERTIFICATE_BASE64}"
+          test -n "${APPLE_CERTIFICATE_PASSWORD}"
+          test -n "${APPLE_CODESIGN_IDENTITY}"
+          test -n "${APPLE_ID}"
+          test -n "${APPLE_TEAM_ID}"
+          test -n "${APPLE_APP_SPECIFIC_PASSWORD}"
+
+      - name: Import Apple Developer ID
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="${RUNNER_TEMP}/developer-id.p12"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/belay-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          printf '%s' "${APPLE_CERTIFICATE_BASE64}" | base64 -D > "${CERTIFICATE_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${CERTIFICATE_PATH}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "${KEYCHAIN_PATH}"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "${KEYCHAIN_PASSWORD}" \
+            "${KEYCHAIN_PATH}"
+          security list-keychain -d user -s "${KEYCHAIN_PATH}"
+
+      - name: Verify source
+        run: |
+          grep -F "readonly DEFAULT_VERSION=\"${ALPHA_VERSION}\"" scripts/install.sh
+          make verify
+
+      - name: Build and sign Apple Silicon archive
+        env:
+          APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
+        run: |
+          scripts/build-developer-preview.sh \
+            --arch arm64 \
+            --version "${ALPHA_VERSION}" \
+            --codesign-identity "${APPLE_CODESIGN_IDENTITY}" \
+            --output-dir dist
+
+      - name: Submit to Apple notarization
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          scripts/notarize-release.sh \
+            --archive "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz"
+
+      - name: Verify packaged runtime
+        run: |
+          (
+            cd dist
+            shasum -a 256 -c \
+              "belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz.sha256"
+          )
+          scripts/smoke-developer-preview.sh \
+            "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz"
+
+      - name: Verify installer, update path, and uninstall
+        run: |
+          QA_ROOT="${RUNNER_TEMP}/belay-installer-qa"
+          QA_HOME="${QA_ROOT}/home"
+          QA_INSTALL="${QA_ROOT}/program"
+          QA_BIN="${QA_ROOT}/bin"
+          mkdir -p "${QA_HOME}"
+          HOME="${QA_HOME}" scripts/install.sh \
+            --archive "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz" \
+            --checksum "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz.sha256" \
+            --install-root "${QA_INSTALL}" \
+            --bin-dir "${QA_BIN}"
+          "${QA_BIN}/belay" version | grep -F "${ALPHA_VERSION}"
+          HOME="${QA_HOME}" scripts/install.sh \
+            --archive "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz" \
+            --checksum "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz.sha256" \
+            --install-root "${QA_INSTALL}" \
+            --bin-dir "${QA_BIN}"
+          HOME="${QA_HOME}" scripts/install.sh \
+            --uninstall \
+            --install-root "${QA_INSTALL}" \
+            --bin-dir "${QA_BIN}"
+          test ! -e "${QA_BIN}/belay"
+          test ! -e "${QA_INSTALL}/runtime"
+
+      - name: Publish GitHub prerelease
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.BELAY_PUBLIC_RELEASE_TOKEN }}
+        run: |
+          cat > "${RUNNER_TEMP}/release-notes.md" <<EOF
+          Belay Local ${ALPHA_VERSION} for Apple Silicon macOS.
+
+          Install:
+
+          \`\`\`bash
+          curl -fsSL https://getbelay.vercel.app/install | bash
+          \`\`\`
+
+          Belay keeps agent session content on-device and requires no account.
+          Optional fixed-field usage telemetry and public release checks can
+          be disabled independently.
+          EOF
+          gh release create "v${ALPHA_VERSION}" \
+            --repo DoplexLabs/belay \
+            --prerelease \
+            --target main \
+            --title "Belay Local ${ALPHA_VERSION}" \
+            --notes-file "${RUNNER_TEMP}/release-notes.md" \
+            "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz" \
+            "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz.sha256" \
+            "scripts/install.sh"
+
+      - name: Upload verified release candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: belay-local-signed-alpha-${{ inputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            scripts/install.sh
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          security delete-keychain "${RUNNER_TEMP}/belay-signing.keychain-db" || true

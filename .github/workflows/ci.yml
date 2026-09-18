@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Public-history privacy guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+
+          while IFS=$'\t' read -r commit author_name author_email committer_name committer_email; do
+            for identity in \
+              "${author_name}<${author_email}>" \
+              "${committer_name}<${committer_email}>"; do
+              case "${identity}" in
+                "rkat7-v2<290234671+rkat7-v2@users.noreply.github.com>"|\
+                "samsat701<145064993+samsat701@users.noreply.github.com>"|\
+                "Samyak<145064993+samsat701@users.noreply.github.com>"|\
+                "GitHub<noreply@github.com>")
+                  ;;
+                *)
+                  echo "::error::Unapproved public commit identity in ${commit}: ${identity}"
+                  failed=1
+                  ;;
+              esac
+            done
+          done < <(git log --all --format='%H%x09%an%x09%ae%x09%cn%x09%ce')
+
+          if git grep -I -n -E '/(Users|home)/[A-Za-z0-9._-]+/' \
+            HEAD -- . ':(exclude)testdata/**' ':(exclude)*_test.go'; then
+            echo "::error::Personal home-directory path found in tracked public content"
+            failed=1
+          fi
+
+          if git grep -I -n -E \
+            '[A-Za-z0-9._%+-]+@(gmail|hotmail|outlook|yahoo)\.[A-Za-z]{2,}' \
+            HEAD -- . ':(exclude)testdata/**' ':(exclude)*_test.go'; then
+            echo "::error::Personal-email provider found in tracked public content"
+            failed=1
+          fi
+
+          exit "${failed}"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Test
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 ./...
+
+      - name: Race-sensitive tests
+        run: go test -race ./internal/storage/local ./internal/pipeline ./internal/localapp
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Static build
+        env:
+          CGO_ENABLED: "0"
+        run: go build -trimpath -o /tmp/belay ./cmd/belay
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Alpha release-surface checks
+        run: make verify-release-surface
