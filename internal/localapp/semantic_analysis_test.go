@@ -885,10 +885,21 @@ printf '%s\n' '{"model":"claude-fake","structured_output":{"clusters":[],"fixes"
 		"<--tools>",
 		"<>",
 		"<--no-session-persistence>",
+		"<--settings>\n<{\"disableAllHooks\":true}>",
 	} {
 		if !bytes.Contains(args, []byte(required)) {
 			t.Fatalf("Claude args missing %q:\n%s", required, args)
 		}
+	}
+}
+
+func TestClaudeSemanticSettingsDisableAllHooks(t *testing.T) {
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(claudeSemanticSettings), &settings); err != nil {
+		t.Fatalf("Claude semantic settings are not JSON: %v", err)
+	}
+	if settings["disableAllHooks"] != true || len(settings) != 1 {
+		t.Fatalf("Claude semantic settings = %s", claudeSemanticSettings)
 	}
 }
 
