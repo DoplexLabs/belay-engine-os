@@ -1401,6 +1401,7 @@
       : `Updated ${formatRelativeTime(brief.generated_at) || "just now"}`;
     renderReportTotals(brief);
     renderReportIssues(brief.top_issues);
+    if (state.reportHabitsStatus === "ready") renderReportHabits();
     renderReportFixes(brief.fixes);
     renderReportWaste(brief.waste);
     renderReportAbout(brief.about);
@@ -10786,6 +10787,9 @@
     const insights = state.reportHabits;
     const loading = state.reportHabitsStatus === "loading";
     elements.reportHabitsList.replaceChildren();
+    elements.reportHabitsEmpty
+      .querySelectorAll(".report-habit-pattern")
+      .forEach((pattern) => pattern.remove());
     elements.reportHabitSummary.hidden = true;
     if (!insights) {
       elements.reportHabitsEmpty.hidden = true;
@@ -10806,17 +10810,59 @@
         : pending === 0
           ? `${sessions.length} of your last ${sessions.length} sessions debriefed by your ${habitsHarnessLabel(insights.harness.name)}.`
           : insights.harness.available
-            ? `${ready.length} of ${sessions.length} debriefed. Belay is writing the ${pending === 1 ? "other one" : `other ${pending}`} with your ${habitsHarnessLabel(insights.harness.name)} in the background.`
-            : "Install Claude Code, Codex, the Cursor CLI, or the Antigravity CLI on this machine and Belay will debrief these sessions automatically.";
+            ? `${ready.length} of ${sessions.length} debriefed. Belay is writing the ${pending === 1 ? "other one" : `other ${pending}`} with your ${habitsHarnessLabel(insights.harness.name)} in the background. That uses your account and usually takes one to three minutes.`
+            : "Install Claude Code or Codex on this machine. A debrief runs on that account.";
+    const issue = topReportIssue();
+    let patternShown = false;
     const cards = document.createDocumentFragment();
     sessions.forEach((session) => {
-      cards.appendChild(renderReportHabitCard(session, insights.harness));
+      const showPattern = Boolean(issue && !patternShown && !session.debrief);
+      if (showPattern) patternShown = true;
+      cards.appendChild(renderReportHabitCard(session, insights.harness, showPattern));
     });
     elements.reportHabitsList.replaceChildren(cards);
+    if (sessions.length === 0 && issue) {
+      elements.reportHabitsEmpty.appendChild(createWaitingPattern(issue));
+    }
     renderReportHabitSummary(ready);
   }
 
-  function renderReportHabitCard(session, harness) {
+  function topReportIssue() {
+    return state.developerBrief && state.developerBrief.top_issues.length
+      ? state.developerBrief.top_issues[0]
+      : null;
+  }
+
+  function createWaitingPattern(issue) {
+    const pattern = createElement("div", "report-habit-pattern");
+    pattern.append(
+      createElement("p", "eyebrow", "Repeated pattern"),
+      createElement("h3", "report-habit-pattern-title", humanizeReportHeadline(issue.headline)),
+      createElement(
+        "p",
+        "report-habit-pattern-metrics",
+        [
+          formatIssueDollarCost(issue.cost),
+          formatIssueMinutes(issue.cost),
+          `${formatNumber(issue.session_count)} ${toFiniteNumber(issue.session_count) === 1 ? "session" : "sessions"}`,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      ),
+    );
+    if (issue.excerpts.length) {
+      pattern.appendChild(createReportIssuePreview(issue.excerpts[0]));
+    }
+    const evidence = createElement("button", "secondary-button", "Show evidence");
+    evidence.type = "button";
+    evidence.setAttribute("aria-haspopup", "dialog");
+    evidence.setAttribute("aria-controls", "report-evidence-dialog");
+    evidence.addEventListener("click", () => openReportEvidenceDrawer(issue));
+    pattern.appendChild(evidence);
+    return pattern;
+  }
+
+  function renderReportHabitCard(session, harness, showPattern) {
     const card = createElement("article", "report-habit-card");
     card.dataset.sessionKey = readText(session.session_key);
     const header = createElement("header", "report-habit-header");
@@ -10852,12 +10898,23 @@
       if (harness.available) {
         pending.appendChild(createElement("span", "spinner"));
         pending.appendChild(
-          createElement("p", "", `Being written by your ${habitsHarnessLabel(harness.name)}…`),
+          createElement(
+            "p",
+            "",
+            `Being written by your ${habitsHarnessLabel(harness.name)}. This uses that account and usually takes one to three minutes.`,
+          ),
         );
       } else {
-        pending.appendChild(createElement("p", "", "No harness installed to write this debrief."));
+        pending.appendChild(
+          createElement(
+            "p",
+            "",
+            "A debrief needs Claude Code or Codex on this machine, and it runs on that account.",
+          ),
+        );
       }
       card.appendChild(pending);
+      if (showPattern) card.appendChild(createWaitingPattern(topReportIssue()));
       return card;
     }
     const debrief = record.debrief;

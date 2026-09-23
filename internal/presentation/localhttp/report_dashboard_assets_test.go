@@ -43,10 +43,13 @@ func TestReportDashboardHidesPatternsAndShowsDebriefs(t *testing.T) {
 		`await apiGet("/v1/user-insights?limit=3")`,
 		`void loadReportHabits();`,
 		`function renderReportHabits()`,
-		`function renderReportHabitCard(session, harness)`,
+		`function renderReportHabitCard(session, harness, showPattern)`,
 		`function renderReportHabitSummary(readySessions)`,
 		`"Read the full debrief"`,
 		`in the background.`,
+		`This uses that account and usually takes one to three minutes.`,
+		`function createWaitingPattern(issue)`,
+		`Repeated pattern`,
 		`"Your recent sessions at a glance"`,
 	} {
 		if !strings.Contains(app, required) {
@@ -55,6 +58,9 @@ func TestReportDashboardHidesPatternsAndShowsDebriefs(t *testing.T) {
 	}
 	if strings.Contains(app, `"Your top recurring pattern"`) {
 		t.Error("Report heading must no longer be pattern-driven")
+	}
+	if strings.Contains(app, `"No harness installed to write this debrief."`) {
+		t.Error("Report waiting copy must not mention harness installation")
 	}
 	for _, required := range []string{".report-stats dl > div {", ".report-habit-card {", ".report-habit-stat {", ".report-spark-wrap {"} {
 		if !strings.Contains(styles, required) {
