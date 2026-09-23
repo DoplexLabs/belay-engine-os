@@ -40,6 +40,13 @@ const (
 
 const semanticClipMarker = "\n[... Belay clipped content ...]\n"
 
+// claudeSemanticSettings turns off every hook for Belay's own `claude -p`
+// run. The run inherits the user's settings, where Belay's monitor hooks
+// would otherwise record each background analysis call as a new live
+// Claude Code session. `--bare` also skips hooks but stops reading OAuth
+// credentials, which breaks subscription sign-in.
+const claudeSemanticSettings = `{"disableAllHooks":true}`
+
 type SemanticHarness string
 
 const (
@@ -379,6 +386,8 @@ func runInstalledSemanticHarnessRaw(
 			"--tools",
 			"",
 			"--no-session-persistence",
+			"--settings",
+			claudeSemanticSettings,
 		}
 	case SemanticHarnessCodex:
 		name = "codex"
