@@ -378,6 +378,7 @@ func missionPackExperienceItem(
 		Authority:     "user_approved",
 		Sources: missionPackExperienceSources(
 			value.Provenance.SourceCandidateID,
+			value.EpisodeRefs,
 			value.Evidence.Refs,
 		),
 	}, nil
@@ -468,9 +469,21 @@ func boundedMissionPackSummaryText(value string, maxRunes int) string {
 
 func missionPackExperienceSources(
 	candidateID string,
+	episodeRefs []string,
 	values []experience.EvidenceRef,
 ) []missionpack.SourceRef {
-	sources := make([]missionpack.SourceRef, 0, len(values))
+	sources := make(
+		[]missionpack.SourceRef,
+		0,
+		len(episodeRefs)+len(values),
+	)
+	for _, episodeID := range episodeRefs {
+		sources = append(sources, missionpack.SourceRef{
+			Kind:        "evidence_episode",
+			CandidateID: candidateID,
+			EpisodeID:   episodeID,
+		})
+	}
 	for _, value := range values {
 		source := missionpack.SourceRef{
 			Kind:         string(value.Kind),
@@ -515,6 +528,7 @@ func missionPackExperienceSourceKey(value missionpack.SourceRef) string {
 	return strings.Join([]string{
 		value.Kind,
 		value.CandidateID,
+		value.EpisodeID,
 		value.SessionKey,
 		fmt.Sprintf("%d", turnIndex),
 		value.EventID,
@@ -575,7 +589,8 @@ func validateMissionPackRequest(
 		)
 	}
 	switch request.Harness {
-	case "", missionpack.HarnessClaude, missionpack.HarnessCodex:
+	case "", missionpack.HarnessClaude, missionpack.HarnessCodex,
+		missionpack.HarnessCursor, missionpack.HarnessAntigravity:
 	default:
 		return missionpack.Request{}, errors.New(
 			"invalid Mission Pack harness",

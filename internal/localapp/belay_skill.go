@@ -26,12 +26,10 @@ type BelaySkillInstallResult struct {
 func InstallBelaySkills(
 	inventory numbat.Inventory,
 ) ([]BelaySkillInstallResult, error) {
-	results := make([]BelaySkillInstallResult, 0, 2)
+	supported := numbat.SupportedAgents()
+	results := make([]BelaySkillInstallResult, 0, len(supported))
 	var installErrors []error
-	for _, agent := range []numbat.Agent{
-		numbat.AgentCodex,
-		numbat.AgentClaude,
-	} {
+	for _, agent := range supported {
 		row, ok := inventory.LaunchTargets[agent]
 		detected := ok && (row.Present || row.Detected)
 		result := BelaySkillInstallResult{
@@ -81,10 +79,25 @@ func skillConfigRoot(agent numbat.Agent) (string, error) {
 	case numbat.AgentCodex:
 		environmentName = "CODEX_HOME"
 		defaultDirectory = ".codex"
+	case numbat.AgentCursor:
+		// Cursor documents no configuration-root override, so the Agent
+		// Skills directory is always resolved under the real home directory.
+		environmentName = ""
+		defaultDirectory = ".cursor"
+	case numbat.AgentAntigravity:
+		// Antigravity 2.0 reads global Agent Skills from
+		// ~/.gemini/config/skills/<skill>/SKILL.md and documents no
+		// environment override for that root, so it is always resolved
+		// under the real home directory.
+		environmentName = ""
+		defaultDirectory = filepath.Join(".gemini", "config")
 	default:
 		return "", errors.New("unsupported skill agent")
 	}
-	root := strings.TrimSpace(os.Getenv(environmentName))
+	var root string
+	if environmentName != "" {
+		root = strings.TrimSpace(os.Getenv(environmentName))
+	}
 	if root == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {

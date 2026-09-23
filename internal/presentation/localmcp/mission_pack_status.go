@@ -111,6 +111,8 @@ func missionPackStatusSchemas() (*strictToolSchemas, error) {
 				"destination_harness": enumStringSchema(
 					string(experience.HarnessClaude),
 					string(experience.HarnessCodex),
+					string(experience.HarnessCursor),
+					string(experience.HarnessAntigravity),
 				),
 				"bound_session": boundedTextSchema(1, 512),
 				"accepted_at":   timestampSchema(),

@@ -1,9 +1,10 @@
-// Command package-preview creates a deterministic tar.gz from a staged
-// developer-preview directory using only the Go standard library.
+// Command package-preview creates a deterministic tar.gz or zip archive from a
+// staged developer-preview directory using only the Go standard library.
 package main
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"flag"
 	"fmt"
@@ -27,21 +28,25 @@ func main() {
 	source := flag.String("source", "", "staged package directory")
 	output := flag.String("output", "", "output .tar.gz path")
 	epoch := flag.String("epoch", "", "source date epoch")
+	format := flag.String("format", "tar.gz", "archive format: tar.gz or zip")
 	flag.Parse()
 
 	if *source == "" || *output == "" || *epoch == "" {
 		fatalf("-source, -output, and -epoch are required")
 	}
+	if *format != "tar.gz" && *format != "zip" {
+		fatalf("-format must be tar.gz or zip")
+	}
 	seconds, err := strconv.ParseInt(*epoch, 10, 64)
 	if err != nil || seconds < 0 {
 		fatalf("invalid source date epoch %q", *epoch)
 	}
-	if err := packageDirectory(*source, *output, time.Unix(seconds, 0).UTC()); err != nil {
+	if err := packageDirectory(*source, *output, *format, time.Unix(seconds, 0).UTC()); err != nil {
 		fatalf("%v", err)
 	}
 }
 
-func packageDirectory(source, output string, modTime time.Time) error {
+func packageDirectory(source, output, format string, modTime time.Time) error {
 	source, err := filepath.Abs(source)
 	if err != nil {
 		return fmt.Errorf("resolve source: %w", err)
@@ -99,6 +104,27 @@ func packageDirectory(source, output string, modTime time.Time) error {
 		}
 	}()
 
+	if format == "zip" {
+		if err := writeZip(file, entries, modTime); err != nil {
+			return err
+		}
+	} else if err := writeTarGz(file, entries, modTime); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync archive: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close archive: %w", err)
+	}
+	if err := os.Rename(temporary, output); err != nil {
+		return fmt.Errorf("publish local archive: %w", err)
+	}
+	cleanup = false
+	return nil
+}
+
+func writeTarGz(file *os.File, entries []entry, modTime time.Time) error {
 	gzipWriter, err := gzip.NewWriterLevel(file, gzip.BestCompression)
 	if err != nil {
 		return fmt.Errorf("create gzip writer: %w", err)
@@ -160,16 +186,55 @@ func packageDirectory(source, output string, modTime time.Time) error {
 	if err := gzipWriter.Close(); err != nil {
 		return fmt.Errorf("close gzip writer: %w", err)
 	}
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync archive: %w", err)
+	return nil
+}
+
+// writeZip mirrors the tar layout for Windows packages: forward-slash entry
+// names under one top-level directory, fixed timestamps, and no ownership.
+// Windows ignores Unix mode bits, so executability comes from the .exe suffix.
+func writeZip(file *os.File, entries []entry, modTime time.Time) error {
+	zipWriter := zip.NewWriter(file)
+	for _, item := range entries {
+		name := item.name
+		if item.info.IsDir() {
+			name = strings.TrimSuffix(name, "/") + "/"
+		}
+		header := &zip.FileHeader{
+			Name:     name,
+			Method:   zip.Deflate,
+			Modified: modTime,
+		}
+		if item.info.IsDir() {
+			header.Method = zip.Store
+			header.SetMode(fs.ModeDir | 0o755)
+		} else if item.info.Mode().Perm()&0o111 != 0 || strings.HasSuffix(name, ".exe") {
+			header.SetMode(0o755)
+		} else {
+			header.SetMode(0o644)
+		}
+		writer, err := zipWriter.CreateHeader(header)
+		if err != nil {
+			return fmt.Errorf("write archive header %s: %w", item.name, err)
+		}
+		if item.info.IsDir() {
+			continue
+		}
+		input, err := os.Open(item.path)
+		if err != nil {
+			return fmt.Errorf("open package file %s: %w", item.name, err)
+		}
+		_, copyErr := io.Copy(writer, input)
+		closeErr := input.Close()
+		if copyErr != nil {
+			return fmt.Errorf("archive package file %s: %w", item.name, copyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close package file %s: %w", item.name, closeErr)
+		}
 	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close archive: %w", err)
+	if err := zipWriter.Close(); err != nil {
+		return fmt.Errorf("close zip writer: %w", err)
 	}
-	if err := os.Rename(temporary, output); err != nil {
-		return fmt.Errorf("publish local archive: %w", err)
-	}
-	cleanup = false
 	return nil
 }
 

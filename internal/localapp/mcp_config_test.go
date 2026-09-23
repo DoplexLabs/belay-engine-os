@@ -698,6 +698,80 @@ func TestMCPManifestRejectsLooseModeAndSymlink(t *testing.T) {
 	}
 }
 
+func TestMCPManifestAcceptsEverySupportedAgentAndRejectsOthers(t *testing.T) {
+	target := func(command string) mcpManifestTarget {
+		return mcpManifestTarget{
+			Scope:      "user",
+			Command:    command,
+			Args:       []string{"mcp"},
+			VerifiedAt: "2026-09-09T20:00:00Z",
+		}
+	}
+	command := filepath.Join(t.TempDir(), "belay")
+	full := mcpOwnershipManifest{
+		Version:        mcpManifestVersion,
+		InstallationID: "inst_abcdefgh",
+		Targets: map[string]mcpManifestTarget{
+			"codex":       target(command),
+			"claude":      target(command),
+			"cursor":      target(command),
+			"antigravity": target(command),
+		},
+	}
+	if !validMCPManifest(full, "inst_abcdefgh") {
+		t.Fatalf("four-target manifest rejected: %+v", full)
+	}
+	paths, err := ResolvePaths(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMCPManifest(paths.MCPManifest, full); err != nil {
+		t.Fatal(err)
+	}
+	loaded, state := loadMCPManifest(paths.MCPManifest, "inst_abcdefgh")
+	if state != manifestValid || len(loaded.Targets) != 4 ||
+		loaded.Targets["antigravity"].Command != command {
+		t.Fatalf("manifest = %+v state=%v", loaded, state)
+	}
+	for _, agent := range []string{"gemini", "Antigravity", "antigravity ", "windsurf"} {
+		unknown := mcpOwnershipManifest{
+			Version:        mcpManifestVersion,
+			InstallationID: "inst_abcdefgh",
+			Targets:        map[string]mcpManifestTarget{agent: target(command)},
+		}
+		if validMCPManifest(unknown, "inst_abcdefgh") {
+			t.Fatalf("agent %q accepted", agent)
+		}
+	}
+	tooMany := mcpOwnershipManifest{
+		Version:        mcpManifestVersion,
+		InstallationID: "inst_abcdefgh",
+		Targets:        map[string]mcpManifestTarget{},
+	}
+	for _, agent := range []string{"codex", "claude", "cursor", "antigravity", "extra"} {
+		tooMany.Targets[agent] = target(command)
+	}
+	if validMCPManifest(tooMany, "inst_abcdefgh") {
+		t.Fatal("five-target manifest accepted")
+	}
+}
+
+func TestDefaultMCPTargetsListEveryHarnessInStableOrder(t *testing.T) {
+	targets := defaultMCPTargets()
+	agents := make([]string, 0, len(targets))
+	for _, target := range targets {
+		agents = append(agents, target.agent)
+	}
+	if !slices.Equal(agents, []string{"codex", "claude", "cursor", "antigravity"}) {
+		t.Fatalf("targets = %q", agents)
+	}
+	for _, target := range targets[2:] {
+		if target.file == nil || !target.duplicateAddSafe || target.executable != "" {
+			t.Fatalf("file target %q = %+v", target.agent, target)
+		}
+	}
+}
+
 func TestStatusAndUninstallDoNotCreateMissingBelayHomeOrManifest(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing-home")
 	paths, err := ResolvePaths(root)
@@ -726,7 +800,12 @@ func mcpTestDependencies(
 	codex, claude string,
 ) mcpConfigDependencies {
 	t.Helper()
+	// Point os.UserHomeDir-backed detection at an empty private directory so no
+	// test can read or rewrite the developer's real ~/.cursor or ~/.gemini
+	// registries.
+	home := t.TempDir()
 	return mcpConfigDependencies{
+		home: func() (string, error) { return home, nil },
 		lookPath: func(name string) (string, error) {
 			switch name {
 			case "codex":

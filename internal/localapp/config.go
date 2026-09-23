@@ -28,6 +28,8 @@ type Paths struct {
 	Database          string
 	CodexSpool        string
 	ClaudeSpool       string
+	CursorSpool       string
+	AntigravitySpool  string
 	Logs              string
 	BundledBin        string
 	TranscriptCursors string
@@ -65,8 +67,14 @@ func ResolvePaths(explicitRoot string) (Paths, error) {
 		Database:    filepath.Join(absolute, "belay.sqlite"),
 		CodexSpool:  filepath.Join(absolute, "live", "codex.ndjson"),
 		ClaudeSpool: filepath.Join(absolute, "live", "claude.ndjson"),
-		Logs:        filepath.Join(absolute, "logs"),
-		BundledBin:  filepath.Join(absolute, "bin", "numbat"),
+		CursorSpool: filepath.Join(absolute, "live", "cursor.ndjson"),
+		AntigravitySpool: filepath.Join(
+			absolute,
+			"live",
+			"antigravity.ndjson",
+		),
+		Logs:       filepath.Join(absolute, "logs"),
+		BundledBin: filepath.Join(absolute, "bin", numbatExecutableName),
 		TranscriptCursors: filepath.Join(
 			absolute,
 			"transcripts",
@@ -138,7 +146,10 @@ func ResolveNumbatBinaryForExecutable(
 		paths.BundledBin,
 	}
 	if strings.TrimSpace(belayExecutable) != "" {
-		candidates = append(candidates, filepath.Join(filepath.Dir(belayExecutable), "numbat"))
+		candidates = append(
+			candidates,
+			filepath.Join(filepath.Dir(belayExecutable), numbatExecutableName),
+		)
 	}
 	for _, candidate := range candidates {
 		if candidate == "" {
@@ -224,7 +235,7 @@ func materializeNumbatBody(
 	if err := ensurePrivateDirectory(filepath.Dir(paths.BundledBin)); err != nil {
 		return "", err
 	}
-	destination := paths.BundledBin + "-" + checksum[:16]
+	destination := materializedNumbatPath(paths.BundledBin, checksum)
 	output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o500)
 	if errors.Is(err, os.ErrExist) {
 		_, existingChecksum, readErr := readNumbatSource(destination)
@@ -276,6 +287,9 @@ func ensurePrivateDirectories(paths Paths) error {
 	for _, directory := range []string{
 		paths.Root,
 		filepath.Dir(paths.CodexSpool),
+		filepath.Dir(paths.ClaudeSpool),
+		filepath.Dir(paths.CursorSpool),
+		filepath.Dir(paths.AntigravitySpool),
 		paths.Logs,
 		filepath.Dir(paths.BundledBin),
 		paths.TranscriptCursors,
@@ -363,9 +377,4 @@ func validInstallationID(value string) bool {
 		return false
 	}
 	return true
-}
-
-func usableExecutable(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
 }

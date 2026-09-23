@@ -51,6 +51,7 @@ func TestScanTranscriptsGroupsClaudeOrdersTurnsAndSanitizesRemote(t *testing.T) 
 	claudeRoot := filepath.Join(root, "claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 	sessionID := "11111111-1111-4111-8111-111111111111"
 	projectRoot := filepath.Join(claudeRoot, "projects", "-synthetic-project")
 	parent := filepath.Join(projectRoot, sessionID+".jsonl")
@@ -163,6 +164,7 @@ func TestScanTranscriptsCoveragePartialAndRecentLive(t *testing.T) {
 			claudeRoot := filepath.Join(root, "claude")
 			t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 			t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+			t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 			sessionID := strings.Split(test.body, `"`)[7]
 			path := filepath.Join(
 				claudeRoot,
@@ -195,6 +197,7 @@ func TestScanHistoricalTranscriptsBackfillsNewestFirst(t *testing.T) {
 	claudeRoot := filepath.Join(root, "claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 	now := time.Date(2026, time.September, 9, 18, 0, 0, 0, time.UTC)
 	sessions := []struct {
 		id       string
@@ -355,6 +358,7 @@ func TestImportTranscriptsIncompleteReplayRotationAndStoreBeforeCursor(t *testin
 	claudeRoot := filepath.Join(root, "claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 	sessionID := "88888888-8888-4888-8888-888888888888"
 	path := filepath.Join(
 		claudeRoot,
@@ -448,6 +452,7 @@ func TestImportTranscriptsAgesUnchangedLiveSessionToComplete(t *testing.T) {
 	claudeRoot := filepath.Join(root, "claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 	sessionID := "99999999-9999-4999-8999-999999999999"
 	path := filepath.Join(
 		claudeRoot,
@@ -492,6 +497,7 @@ func TestImportTranscriptsFinalizesPendingCodexUsageOnInactivity(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "missing-claude"))
 	codexRoot := filepath.Join(root, "codex")
 	t.Setenv("CODEX_HOME", codexRoot)
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 	sessionID := "aaaaaaaa-1111-4111-8111-111111111111"
 	path := filepath.Join(
 		codexRoot,
@@ -616,6 +622,7 @@ func TestImportRecentTranscriptsRotatesAcrossRecentGroups(t *testing.T) {
 	claudeRoot := filepath.Join(root, "claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 	now := time.Date(2026, time.September, 9, 18, 0, 0, 0, time.UTC)
 	sessionIDs := []string{
 		"41000000-0000-4000-8000-000000000001",
@@ -672,6 +679,7 @@ func TestDrainScanTranscriptsPrioritizesSmallPendingEligibleGroups(t *testing.T)
 	claudeRoot := filepath.Join(root, "claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 	now := time.Now().UTC()
 	sessions := []struct {
 		id        string
@@ -799,6 +807,7 @@ func TestDrainScanTranscriptsFullyDrainsLargeSnapshotAndDefersAppend(
 	claudeRoot := filepath.Join(root, "claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 	sessionID := "55000000-0000-4000-8000-000000000005"
 	path := filepath.Join(
 		claudeRoot,
@@ -894,6 +903,7 @@ func TestHistoricalBackfillCommitsLargeSessionInPartialChunks(t *testing.T) {
 	claudeRoot := filepath.Join(root, "claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(root, "missing-cursor"))
 	sessionID := "44000000-0000-4000-8000-000000000004"
 	path := filepath.Join(
 		claudeRoot,
@@ -972,4 +982,108 @@ func claudeUserLine(sessionID, timestamp, text string) string {
 		`","timestamp":"` + timestamp +
 		`","cwd":"/synthetic/project","gitBranch":"main","message":{"role":"user","content":"` +
 		text + `"}}`
+}
+
+// Cursor transcripts import like the other harnesses: the top-level thread and
+// its nested subagent thread land in one session, ordered by timestamp, and the
+// canaries planted in the fixtures are scrubbed before anything reaches the
+// store. The Claude-only parent-tool pre-pass must not touch this group.
+func TestScanTranscriptsImportsCursorThreadsAndScrubsBeforeStorage(t *testing.T) {
+	root := t.TempDir()
+	cursorRoot := filepath.Join(root, "cursor")
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "missing-claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", cursorRoot)
+
+	conversation := "cur-11111111-1111-4111-8111-111111111111"
+	transcripts := filepath.Join(
+		cursorRoot,
+		"projects",
+		"7f3a9c2b5e1d",
+		"agent-transcripts",
+	)
+	thread := filepath.Join(transcripts, conversation+".jsonl")
+	subagent := filepath.Join(transcripts, conversation, "agent-synthetic.jsonl")
+	writeTranscriptTestFile(t, thread, readTranscriptFixture(t, "cursor", "main.jsonl"))
+	writeTranscriptTestFile(
+		t,
+		subagent,
+		readTranscriptFixture(t, "cursor", "subagent.jsonl"),
+	)
+	old := time.Now().Add(-10 * time.Minute)
+	for _, path := range []string{thread, subagent} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	paths, err := ResolvePaths(filepath.Join(root, "belay"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &recordingTranscriptStore{}
+	if err := ScanTranscripts(context.Background(), paths, store); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.calls) != 1 {
+		t.Fatalf("store calls = %d, want 1 (both threads are one session)", len(store.calls))
+	}
+	call := store.calls[0]
+	if call.session.Agent != acquisition.AgentCursor ||
+		call.session.SessionKey != numbatmap.SessionKey(
+			acquisition.AgentCursor,
+			conversation,
+			"",
+		) ||
+		call.session.NativeSessionID != conversation ||
+		call.session.ProjectPath != "/synthetic/cursor-project" ||
+		call.session.ProjectIdentity != "/synthetic/cursor-project" {
+		t.Fatalf("session = %+v", call.session)
+	}
+	// The fixture carries one malformed line, so coverage degrades honestly.
+	if call.session.Coverage != belaytranscript.CoveragePartial {
+		t.Fatalf("coverage = %q, want partial", call.session.Coverage)
+	}
+	if len(call.turns) != 11 {
+		t.Fatalf("turns = %d, want 11", len(call.turns))
+	}
+	sourceFiles := make(map[string]bool)
+	foundSubagent := false
+	for index, turn := range call.turns {
+		sourceFiles[turn.Payload.SourceFileID] = true
+		if turn.TurnIndex != int64(index) {
+			t.Fatalf("turn %d index = %d", index, turn.TurnIndex)
+		}
+		if index > 0 && turn.OccurredAt.Before(call.turns[index-1].OccurredAt) {
+			t.Fatalf("turns are not timestamp ordered: %+v", call.turns)
+		}
+		if turn.Payload.Text == "Cursor subagent evidence" {
+			foundSubagent = true
+			if turn.Payload.ParentToolUseID != "cursor-subagent-thread:agent-synthetic" {
+				t.Fatalf("subagent parent linkage = %q", turn.Payload.ParentToolUseID)
+			}
+		}
+	}
+	if !foundSubagent {
+		t.Fatal("Cursor subagent turn missing")
+	}
+	if len(sourceFiles) != 2 {
+		t.Fatalf("source citation identities = %v, want thread and subagent", sourceFiles)
+	}
+	for _, turn := range call.turns {
+		for _, forbidden := range []string{
+			"cursorsupersecret",
+			"cursoranothersecret",
+			"cursor-private-result",
+			"cursor-private-read",
+			"PRIVATE_CURSOR_REASONING_CANARY",
+		} {
+			if strings.Contains(turn.Payload.Text, forbidden) ||
+				strings.Contains(turn.Payload.ToolResult, forbidden) ||
+				strings.Contains(turn.Payload.RawCommand, forbidden) ||
+				strings.Contains(string(turn.Payload.ToolInput), forbidden) {
+				t.Fatalf("stored Cursor turn contains %q: %+v", forbidden, turn.Payload)
+			}
+		}
+	}
 }

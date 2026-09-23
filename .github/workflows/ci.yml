@@ -18,44 +18,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Public-history privacy guard
-        shell: bash
-        run: |
-          set -euo pipefail
-          failed=0
-
-          while IFS=$'\t' read -r commit author_name author_email committer_name committer_email; do
-            for identity in \
-              "${author_name}<${author_email}>" \
-              "${committer_name}<${committer_email}>"; do
-              case "${identity}" in
-                "rkat7-v2<290234671+rkat7-v2@users.noreply.github.com>"|\
-                "samsat701<145064993+samsat701@users.noreply.github.com>"|\
-                "Samyak<145064993+samsat701@users.noreply.github.com>"|\
-                "GitHub<noreply@github.com>")
-                  ;;
-                *)
-                  echo "::error::Unapproved public commit identity in ${commit}: ${identity}"
-                  failed=1
-                  ;;
-              esac
-            done
-          done < <(git log --all --format='%H%x09%an%x09%ae%x09%cn%x09%ce')
-
-          if git grep -I -n -E '/(Users|home)/[A-Za-z0-9._-]+/' \
-            HEAD -- . ':(exclude)testdata/**' ':(exclude)*_test.go'; then
-            echo "::error::Personal home-directory path found in tracked public content"
-            failed=1
-          fi
-
-          if git grep -I -n -E \
-            '[A-Za-z0-9._%+-]+@(gmail|hotmail|outlook|yahoo)\.[A-Za-z]{2,}' \
-            HEAD -- . ':(exclude)testdata/**' ':(exclude)*_test.go'; then
-            echo "::error::Personal-email provider found in tracked public content"
-            failed=1
-          fi
-
-          exit "${failed}"
+      - name: Introduced-commit privacy guard
+        run: scripts/verify-privacy.sh
 
       - uses: actions/setup-go@v7
         with:
@@ -78,8 +42,88 @@ jobs:
           CGO_ENABLED: "0"
         run: go build -trimpath -o /tmp/belay ./cmd/belay
 
+      - name: Windows cross-compile and vet
+        run: make verify-windows
+
+      - name: Windows installer contract
+        shell: pwsh
+        run: ./scripts/install_windows_test.ps1
+
       - name: Diff hygiene
         run: git diff --check
 
       - name: Alpha release-surface checks
         run: make verify-release-surface
+
+  windows:
+    # Windows engineering preview: every step gates, like the macOS job.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+        run: go build ./...
+
+      - name: Vet
+        env:
+          CGO_ENABLED: "0"
+        run: go vet ./...
+
+      - name: Build belay.exe
+        env:
+          CGO_ENABLED: "0"
+        run: go build -trimpath -o "${{ runner.temp }}\belay\bin\belay.exe" ./cmd/belay
+
+      - name: Build pinned Numbat
+        env:
+          CGO_ENABLED: "0"
+          GOFLAGS: ""
+        run: |
+          $numbat = "${{ runner.temp }}\numbat-src"
+          git init --quiet $numbat
+          git -C $numbat remote add origin https://github.com/DoplexLabs/numbat.git
+          git -C $numbat fetch --quiet --depth=1 origin b5172bb8bb8f1d68edc4f3b9462de7e248dc5243
+          git -C $numbat checkout --quiet --detach FETCH_HEAD
+          $env:GIT_CONFIG_COUNT = "1"
+          $env:GIT_CONFIG_KEY_0 = "url.https://github.com/cel-expr/cel-go.insteadOf"
+          $env:GIT_CONFIG_VALUE_0 = "https://github.com/google/cel-go"
+          go -C $numbat build -trimpath -ldflags="-s -w" -o "${{ runner.temp }}\belay\bin\numbat.exe" ./cmd/numbat
+
+      - name: Read-only runtime smoke
+        run: |
+          $bin = "${{ runner.temp }}\belay\bin"
+          & "$bin\belay.exe" version
+          & "$bin\belay.exe" help | Select-String -Quiet quickstart
+          & "$bin\numbat.exe" version | Select-String -Quiet b5172bb8bb8f
+          $userHome = "${{ runner.temp }}\smoke-user-home"
+          $belayHome = "${{ runner.temp }}\smoke-belay-home"
+          New-Item -ItemType Directory -Path $userHome | Out-Null
+          $env:USERPROFILE = $userHome
+          $env:HOME = $userHome
+          & "$bin\belay.exe" agents --home $belayHome --allow-unverified-numbat
+          if ($LASTEXITCODE -ne 0) { throw "belay agents failed" }
+          if (-not (Test-Path "$belayHome\config.json")) { throw "config.json was not created" }
+          & "$bin\belay.exe" sessions --db "$belayHome\belay.sqlite"
+          if ($LASTEXITCODE -ne 0) { throw "first store open (DPAPI create) failed" }
+          & "$bin\belay.exe" sessions --db "$belayHome\belay.sqlite"
+          if ($LASTEXITCODE -ne 0) { throw "second store open (DPAPI load) failed" }
+          if (-not (Test-Path "$belayHome\keys")) { throw "DPAPI key directory was not created" }
+
+      - name: Test
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 ./...
+
+      - name: Windows installer contract
+        run: .\scripts\install_windows_test.ps1

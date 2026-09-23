@@ -1123,7 +1123,8 @@ func genericMissionPackExecutable(value string) bool {
 		"sh", "bash", "zsh", "fish", "dash", "ash", "ksh", "csh",
 		"tcsh", "pwsh", "powershell", "cmd", "nu",
 		"nushell", "xonsh", "shell",
-		"belay", "numbat", "claude", "codex":
+		"belay", "numbat", "claude", "codex", "cursor", "cursor-agent",
+		"antigravity", "agy":
 		return true
 	default:
 		return false

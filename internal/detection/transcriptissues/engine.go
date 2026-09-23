@@ -332,6 +332,8 @@ func headline(detector, subject string, occurrences, sessions int) string {
 		return fmt.Sprintf("Cold starts consumed more than 15%% of spend across %d sessions.", sessions)
 	case issueintel.DetectorFileThrash:
 		return fmt.Sprintf("%s was repeatedly edited %d times across %d sessions.", subject, occurrences, sessions)
+	case issueintel.DetectorFileReversal:
+		return fmt.Sprintf("%s returned to an earlier edit state across %d sessions.", subject, sessions)
 	case issueintel.DetectorCompactionBeforeCompletion:
 		return fmt.Sprintf("Context compacted before verified completion in %d sessions.", sessions)
 	default:

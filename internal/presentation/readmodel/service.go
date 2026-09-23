@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/DoplexLabs/belay-engine/internal/canonical/model"
+	"github.com/DoplexLabs/belay-engine/internal/evidenceepisode"
 	"github.com/DoplexLabs/belay-engine/internal/initialization"
+	"github.com/DoplexLabs/belay-engine/internal/issueintel"
 )
 
 const SchemaVersion = "belay.read.v1"
@@ -113,11 +115,15 @@ type Service struct {
 	fixMonitoringRepository   FixMonitoringRepository
 	transcriptRepository      TranscriptRepository
 	costIssueRepository       CostIssueRepository
+	costIssueRankingPolicy    string
 	insightRepository         InsightRepository
 	reportRepository          UsageReportRepository
 	userInsightRepository     UserInsightRepository
 	sessionProjectRepository  SessionProjectRepository
+	sessionIdentityRepository SessionIdentityRepository
+	fusedSessionReads         bool
 	habitDebriefRepository    HabitDebriefRepository
+	evidenceEpisodeRepository EvidenceEpisodeRepository
 	userInsightHarness        func() (string, bool)
 	initializationProvider    initialization.Provider
 	now                       func() time.Time
@@ -247,9 +253,10 @@ type SessionTimeline struct {
 }
 
 type SessionDetail struct {
-	SchemaVersion string               `json:"schema_version"`
-	Data          model.SessionSummary `json:"data"`
-	DataThrough   time.Time            `json:"data_through"`
+	SchemaVersion string                    `json:"schema_version"`
+	Data          model.SessionSummary      `json:"data"`
+	Episodes      []evidenceepisode.Episode `json:"episodes"`
+	DataThrough   time.Time                 `json:"data_through"`
 }
 
 type ActivityList struct {
@@ -341,8 +348,9 @@ type cursorEnvelope struct {
 
 func New(repository Repository, options ...Option) *Service {
 	service := &Service{
-		repository: repository,
-		now:        time.Now,
+		repository:             repository,
+		costIssueRankingPolicy: issueintel.RankingPolicyDeterministic,
+		now:                    time.Now,
 	}
 	for _, option := range options {
 		if option != nil {
@@ -459,6 +467,7 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (SessionDeta
 	return SessionDetail{
 		SchemaVersion: SchemaVersion,
 		Data:          data,
+		Episodes:      s.sessionEvidenceEpisodes(ctx, sessionID),
 		DataThrough:   dataThrough,
 	}, err
 }

@@ -38,7 +38,7 @@ var (
 	tempPathPattern         = regexp.MustCompile(`(?i)(?:/private)?/tmp/[^\s"'` + "`" + `]+|/var/folders/[^\s"'` + "`" + `]+`)
 	absolutePathPattern     = regexp.MustCompile(`(?:[A-Za-z]:\\|/)[^\s"'` + "`" + `:]+`)
 	spacePattern            = regexp.MustCompile(`\s+`)
-	errorMarkerPattern      = regexp.MustCompile(`(?i)\b(error|failed|failure|fatal|panic|exception|denied|not found|timed out)\b`)
+	errorMarkerPattern      = regexp.MustCompile(`(?i)(?:\b(error|failed|failure|fatal|panic|exception|denied|not found|timed out)\b|[a-z]+error\b)`)
 	genericExitPattern      = regexp.MustCompile(`(?i)^(?:process |command )?(?:exited|failed)(?: with)?(?: exit)? code \d+\b|^exit code \d+\b`)
 	completionPattern       = regexp.MustCompile(`(?i)\b(done|complete|completed|implemented|finished|tests? pass(?:ed)?)\b`)
 	correctionPattern       = regexp.MustCompile(`(?i)\b(no|don't|do not|stop|wrong|not that|i said|again|undo|revert)\b|(?i)\buse\b.+\bnot\b`)
@@ -409,7 +409,11 @@ func NormalizedErrorSignature(turn transcript.Turn) string {
 // first retained non-empty tool-result line. It does not decide whether the
 // result failed; callers must use ToolResultFailed first.
 func NormalizedFirstFailureLine(turn transcript.Turn) string {
-	line := strings.ToLower(firstMeaningfulLine(turn.Payload.ToolResult))
+	line := firstSpecificErrorLine(turn.Payload.ToolResult)
+	if line == "" {
+		line = firstMeaningfulLine(turn.Payload.ToolResult)
+	}
+	line = strings.ToLower(line)
 	line = tempPathPattern.ReplaceAllString(line, "<tmp>")
 	line = absolutePathPattern.ReplaceAllString(line, "<path>")
 	line = hashPattern.ReplaceAllString(line, "<hash>")

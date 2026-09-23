@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -177,4 +178,227 @@ func TestRecordActivityIsFailOpenAndRetriesLater(t *testing.T) {
 	}
 	var netErr error = errors.New("x")
 	_ = netErr
+}
+
+func TestRecordActivityHonorsDoNotTrack(t *testing.T) {
+	server := &capture{}
+	ts := httptest.NewServer(http.HandlerFunc(server.handler))
+	defer ts.Close()
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		value    string
+		disabled bool
+	}{
+		{"1", true}, {"true", true}, {" YES ", true}, {"on", true},
+		{"0", false}, {"", false}, {"false", false},
+	}
+	for _, tc := range cases {
+		client := newTestClient(t, ts.URL, map[string]string{EnvDoNotTrack: tc.value}, &now)
+		sent, err := client.RecordActivity(context.Background())
+		if err != nil {
+			t.Fatalf("DO_NOT_TRACK=%q: %v", tc.value, err)
+		}
+		status := client.Status()
+		if tc.disabled {
+			if len(sent) != 0 || status.Enabled || !strings.Contains(status.Reason, EnvDoNotTrack) {
+				t.Fatalf("DO_NOT_TRACK=%q must disable: sent=%v status=%+v", tc.value, sent, status)
+			}
+		} else if len(sent) == 0 || !status.Enabled {
+			t.Fatalf("DO_NOT_TRACK=%q must not disable: sent=%v status=%+v", tc.value, sent, status)
+		}
+	}
+	// BELAY_TELEMETRY wins the reason when both are set.
+	both := newTestClient(t, ts.URL, map[string]string{EnvDisable: "0", EnvDoNotTrack: "1"}, &now)
+	if status := both.Status(); status.Enabled || !strings.Contains(status.Reason, EnvDisable) {
+		t.Fatalf("unexpected status with both switches: %+v", status)
+	}
+}
+
+func TestRecordActivityPrintsNoticeOnceAfterFirstSuccessfulSend(t *testing.T) {
+	server := &capture{status: http.StatusInternalServerError}
+	ts := httptest.NewServer(http.HandlerFunc(server.handler))
+	defer ts.Close()
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	var notice bytes.Buffer
+	newClient := func() *Client {
+		return New(root, "0.0.1-alpha.8",
+			WithEnvironment(func(key string) string {
+				if key == EnvEndpoint {
+					return ts.URL
+				}
+				return ""
+			}),
+			WithClock(func() time.Time { return now }),
+			WithHarnessProbe(func() []string { return nil }),
+			WithNotice(&notice),
+		)
+	}
+	if _, err := newClient().RecordActivity(context.Background()); err == nil {
+		t.Fatal("failed send must return an error")
+	}
+	if notice.Len() != 0 {
+		t.Fatalf("no notice before a successful send, got %q", notice.String())
+	}
+	server.status = http.StatusNoContent
+	if _, err := newClient().RecordActivity(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if notice.String() != Notice {
+		t.Fatalf("expected the notice once, got %q", notice.String())
+	}
+	now = now.Add(26 * time.Hour)
+	if _, err := newClient().RecordActivity(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if notice.String() != Notice {
+		t.Fatalf("notice must print only once per home, got %q", notice.String())
+	}
+	body, err := os.ReadFile(filepath.Join(root, StateFileName))
+	if err != nil || !strings.Contains(string(body), `"disclosed": true`) {
+		t.Fatalf("disclosed flag must persist: %v %s", err, body)
+	}
+	silent := New(t.TempDir(), "0.0.1-alpha.8",
+		WithEnvironment(func(key string) string {
+			if key == EnvEndpoint {
+				return ts.URL
+			}
+			return ""
+		}),
+		WithClock(func() time.Time { return now }),
+		WithHarnessProbe(func() []string { return nil }),
+	)
+	if _, err := silent.RecordActivity(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if notice.String() != Notice {
+		t.Fatal("a client without a notice writer must stay silent")
+	}
+}
+
+// redirectHome points os.UserHomeDir at a private directory. Windows resolves
+// it through USERPROFILE rather than HOME, so both are set.
+func redirectHome(t *testing.T, home string) {
+	t.Helper()
+
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
+func TestInstalledHarnessesReportsCursorFromItsRealHomeDirectory(t *testing.T) {
+	home := t.TempDir()
+	redirectHome(t, home)
+	if containsHarness(installedHarnesses(), "cursor") {
+		t.Fatal("cursor reported without a ~/.cursor directory")
+	}
+	if err := os.Mkdir(filepath.Join(home, ".cursor"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !containsHarness(installedHarnesses(), "cursor") {
+		t.Fatal("cursor not reported for a real ~/.cursor directory")
+	}
+}
+
+func TestInstalledHarnessesRejectsNonDirectoryAndSymlinkedCursorHome(t *testing.T) {
+	t.Run("regular file", func(t *testing.T) {
+		home := t.TempDir()
+		redirectHome(t, home)
+		if err := os.WriteFile(filepath.Join(home, ".cursor"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if containsHarness(installedHarnesses(), "cursor") {
+			t.Fatal("cursor reported for a regular ~/.cursor file")
+		}
+	})
+	t.Run("symlink", func(t *testing.T) {
+		home := t.TempDir()
+		target := t.TempDir()
+		redirectHome(t, home)
+		if err := os.Symlink(target, filepath.Join(home, ".cursor")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if containsHarness(installedHarnesses(), "cursor") {
+			t.Fatal("cursor reported for a symlinked ~/.cursor")
+		}
+	})
+}
+
+func TestInstalledHarnessesReportsAntigravityFromItsRealAppDataDirectory(t *testing.T) {
+	home := t.TempDir()
+	redirectHome(t, home)
+	if containsHarness(installedHarnesses(), "antigravity") {
+		t.Fatal("antigravity reported without a ~/.gemini/antigravity directory")
+	}
+	// A bare ~/.gemini (Gemini CLI, or Antigravity's config root alone) is
+	// not Antigravity: only its app-data directory counts.
+	if err := os.MkdirAll(filepath.Join(home, ".gemini", "config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if containsHarness(installedHarnesses(), "antigravity") {
+		t.Fatal("antigravity reported for ~/.gemini without an antigravity directory")
+	}
+	if err := os.Mkdir(filepath.Join(home, ".gemini", "antigravity"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !containsHarness(installedHarnesses(), "antigravity") {
+		t.Fatal("antigravity not reported for a real ~/.gemini/antigravity directory")
+	}
+}
+
+func TestInstalledHarnessesRejectsNonDirectoryAndSymlinkedAntigravityHome(t *testing.T) {
+	t.Run("regular file", func(t *testing.T) {
+		home := t.TempDir()
+		redirectHome(t, home)
+		if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(
+			filepath.Join(home, ".gemini", "antigravity"), nil, 0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if containsHarness(installedHarnesses(), "antigravity") {
+			t.Fatal("antigravity reported for a regular ~/.gemini/antigravity file")
+		}
+	})
+	t.Run("symlink", func(t *testing.T) {
+		home := t.TempDir()
+		target := t.TempDir()
+		redirectHome(t, home)
+		if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(
+			target, filepath.Join(home, ".gemini", "antigravity"),
+		); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if containsHarness(installedHarnesses(), "antigravity") {
+			t.Fatal("antigravity reported for a symlinked ~/.gemini/antigravity")
+		}
+	})
+}
+
+// The wire contract is a fixed field set, so the documented harness values and
+// the one-time disclosure must name exactly the harnesses Belay can report.
+func TestHarnessFieldDocumentationNamesEverySupportedHarness(t *testing.T) {
+	joined := strings.Join(Fields(), "\n")
+	if !strings.Contains(joined, "harnesses (any of claude, codex, cursor, antigravity present)") {
+		t.Fatalf("Fields() harness description = %q", joined)
+	}
+	if len(Fields()) != 8 {
+		t.Fatalf("Fields() = %v, want the fixed eight-field contract", Fields())
+	}
+	if !strings.Contains(Notice, "claude/codex/cursor/antigravity") {
+		t.Fatalf("Notice must disclose every harness value: %q", Notice)
+	}
+}
+
+func containsHarness(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

@@ -24,6 +24,7 @@ type incrementalTrajectoryTestStore struct {
 	sessionErrors map[string]error
 	completed     []string
 	failed        []string
+	requeued      []string
 }
 
 func (store *incrementalTrajectoryTestStore) ListDirtyTrajectorySessions(
@@ -98,6 +99,14 @@ func (store *incrementalTrajectoryTestStore) RecordTrajectoryDerivationFailure(
 		TrajectoryDerivationClaim: claim,
 		Status:                    local.TrajectoryDerivationFailed,
 	}, nil
+}
+
+func (store *incrementalTrajectoryTestStore) MarkTranscriptProjectAnalysisDirty(
+	_ context.Context,
+	projectIdentity string,
+) error {
+	store.requeued = append(store.requeued, projectIdentity)
+	return nil
 }
 
 type trajectoryTestKeyProvider struct {

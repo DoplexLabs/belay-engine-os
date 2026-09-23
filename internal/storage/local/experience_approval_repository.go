@@ -313,6 +313,7 @@ func approvedExperienceFromProposal(
 		Guidance:          approvedProposal.Guidance,
 		Verifier:          approvedProposal.Verifier,
 		Evidence:          candidate.Evidence,
+		EpisodeRefs:       append([]string(nil), candidate.EpisodeRefs...),
 		Provenance: experience.Provenance{
 			ExtractorVersion:  experienceApprovalExtractorVersion,
 			Harness:           proposal.Provenance.Harness,

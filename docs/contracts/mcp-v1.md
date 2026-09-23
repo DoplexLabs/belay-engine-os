@@ -58,9 +58,10 @@ The packaged one-command path:
 ./bin/belay quickstart
 ```
 
-safely inspects detected Codex and Claude Code user-scope MCP configuration.
-Claude registration may proceed automatically when its status is safely
-understood. Normal quickstart does not add an absent Codex entry. The explicit
+safely inspects detected Codex, Claude Code, Cursor, and Antigravity user-scope
+MCP configuration. Claude Code, Cursor, and Antigravity registration may
+proceed automatically when that target's status is safely understood. Normal
+quickstart does not add an absent Codex entry. The explicit
 one-command path that permits that add is:
 
 ```text
@@ -97,9 +98,10 @@ belay mcp-config status [--home PATH]
 belay mcp-config uninstall [--home PATH]
 ```
 
-Direct install follows the same split: Claude may be installed when its status
-is safely understood, while Codex add requires
-`--allow-codex-mcp-add`. Standalone install may create private Belay
+Direct install follows the same split: Claude Code, Cursor, and Antigravity may
+be installed when that target's status is safely understood, while Codex add
+requires `--allow-codex-mcp-add`. The usage line lists the targets as
+`Targets: codex (CLI), claude (CLI), cursor (~/.cursor/mcp.json), antigravity (~/.gemini/config/mcp_config.json).` Standalone install may create private Belay
 configuration and directories to establish a stable installation/ownership
 identity. It does not create or open the Local database and does not create
 Keychain material.
@@ -118,6 +120,106 @@ named `belay` is preserved. Unknown host-CLI status formats fail closed.
 Explicit uninstall removes only an exact current or previously verified
 Belay-owned identity. MCP uninstall does not remove monitor hooks, Local
 history, Keychain material, or the extracted package.
+
+### Cursor
+
+Cursor publishes no MCP configuration CLI. Its global registry is the JSON file
+`~/.cursor/mcp.json`, whose documented shape is:
+
+```text
+{"mcpServers": {"<name>": {"command": "...", "args": [...], "env": {...}}}}
+```
+
+Cursor also accepts remote `url`/`headers` entries, and the file may carry other
+keys Belay does not know. The Cursor target is therefore file backed: Belay reads
+and rewrites that one file itself, performing the same three actions with the
+same result schema as the host-CLI targets.
+
+Cursor is detected only when `~/.cursor` exists as a real directory. No
+environment override is documented for that location, so it is always resolved
+under the real home directory, which on Windows is `USERPROFILE`. When the
+directory is absent, a plain file, or a symlink, Cursor is not detected and
+reports the same shape an undetected host CLI reports: install skips it, and
+status and uninstall report it unavailable.
+
+Status reads the registry through a no-follow regular-file open under a fixed
+size cap. A missing file, a missing `mcpServers` member, or a missing `belay`
+member is absent. A `belay` member carrying exactly `command` and `args` is
+compared by exact identity: the current Belay identity is owned and current, an
+identity the ownership manifest previously recorded is a recognized prior, and
+anything else is foreign. Unparseable JSON, a non-object document, a non-object
+`mcpServers`, a remote `url` entry, and an entry carrying any other member such
+as `env` are unverifiable. Belay never guesses, and never rewrites a file it
+cannot parse.
+
+Install writes `mcpServers.belay` only from a verified absent state, or replaces
+a recognized prior Belay identity after re-verifying it. An exact current entry
+is left unchanged. A foreign or unverifiable entry named `belay` is preserved and
+is never overwritten or removed. The write round-trips the document: every other
+server, every remote entry, and every unknown top-level key is preserved as an
+opaque value. The rendered file is UTF-8 JSON indented with two spaces and ended
+by one newline; members of the top-level object and of `mcpServers` are written
+in sorted key order, each preserved value keeps its own member order and text,
+and no character is re-escaped. The file is written through a temporary file in
+the same directory that is synced and renamed into place, with owner-only
+permissions on Unix and a regular-file replacement inside the private user
+profile on Windows. A symlink at `~/.cursor` or at `~/.cursor/mcp.json` is
+refused.
+
+That write is a single atomic rename of a fully rendered document, so repeating
+it can neither duplicate nor half-apply the entry. The Cursor add is idempotent
+and duplicate-name safe, needs no opt-in, and `--allow-codex-mcp-add` stays a
+Codex-only flag whose meaning is unchanged and which does not affect Cursor.
+
+Uninstall removes `mcpServers.belay` only when the entry on disk is the exact
+current identity or a Belay identity the ownership manifest recorded, re-checked
+before the removal. Everything else in the file is preserved, and `mcpServers` is
+kept as an empty object when the Belay entry was its last member. When safe
+removal cannot be confirmed, Belay changes nothing and reports the same failing
+status the host-CLI targets report.
+
+Belay holds the same MCP configuration lock around every Cursor
+read-modify-write, and records the Cursor target in the ownership manifest the
+way the host-CLI targets are recorded, so a later archive move is recognized
+rather than treated as a foreign entry.
+
+### Antigravity
+
+Google Antigravity 2.0 publishes no MCP configuration CLI. Its documented
+global registry is the JSON file `~/.gemini/config/mcp_config.json`
+(`%USERPROFILE%\.gemini\config\mcp_config.json` on Windows), whose `belay`
+entry has the same shape as Cursor's:
+
+```text
+{"mcpServers": {"belay": {"command": "...", "args": ["mcp"]}}}
+```
+
+Antigravity also accepts remote `serverUrl` entries, and the file may carry
+other keys Belay does not know. The Antigravity target is therefore file
+backed in the same way as Cursor: Belay reads and rewrites that one file
+itself, performing the same three actions with the same result schema as the
+host-CLI targets, under the same ownership rules. Exact identity comparison
+decides ownership, the ownership manifest records priors, and a foreign or
+unverifiable entry named `belay` (for example a `serverUrl` remote entry or an
+entry carrying any other member such as `env`) is preserved untouched and is
+never overwritten or removed. The write is an atomic private write, and every
+other server and every unknown key round-trips byte for byte. That write is
+atomic and idempotent, so the Antigravity add needs no opt-in, and
+`--allow-codex-mcp-add` stays a Codex-only flag that does not affect
+Antigravity.
+
+Antigravity is detected only when `~/.gemini/antigravity`, Antigravity 2.0's
+app-data root, exists as a real directory; a symlink does not count. Belay
+creates `~/.gemini/config` when it is absent and refuses a symlinked path
+rather than writing through it.
+Belay never touches the legacy `~/.gemini/antigravity/mcp_config.json` or a
+workspace `.agents/mcp_config.json`.
+
+Uninstall removes `mcpServers.belay` only when the entry on disk is the exact
+current identity or a Belay identity the ownership manifest recorded, and
+preserves everything else in the file. When safe removal cannot be confirmed,
+Belay changes nothing and reports the same failing status the other targets
+report.
 
 Registration is local and requires no Doplex service, hosted login, paid
 service, or product-network request. A host agent CLI wrapper may independently
@@ -459,7 +561,7 @@ Inputs:
 - `issue_id`: optional exact issue selector, maximum 512 bytes;
 - `intent`: optional `general`, `debug`, `implement`, `refactor`, `review`, or
   `release`; defaults to `general`;
-- `harness`: optional `claude` or `codex`;
+- `harness`: optional `claude`, `codex`, `cursor`, or `antigravity`;
 - `task_hint`: optional active-task description, maximum 280 Unicode
   characters.
 
@@ -485,8 +587,20 @@ Semantic output is abstention-safe:
   `AGENTS.md` or Codex rule guidance safely adapted to `CLAUDE.md`;
 - Codex targets are limited to Codex-compatible configuration, with
   `CLAUDE.md` guidance safely adapted to `AGENTS.md`;
+- Antigravity targets are limited to `.agents/rules/belay.md`, because
+  Antigravity reads project rules only from `.agents/rules/*.md` and never
+  from `AGENTS.md` or `CLAUDE.md`; `CLAUDE.md`, `AGENTS.md`, and Codex rule
+  guidance all fold into that file and `.claude/settings.json` items are
+  suppressed;
 - incompatible targets, including Claude settings proposed to Codex, are
   suppressed.
+
+`propose_fix` may target `.agents/rules/belay.md` in addition to the existing
+allowlisted harness configuration files. A new file is seeded with the front
+matter `trigger: always_on` and rules are appended as `- <rule>` lines;
+Antigravity's 12,000-character per-rule-file limit applies, Belay owns only
+its own file, and the global rules file `~/.gemini/GEMINI.md` is never
+written.
 
 Verification selection is intent-aware and returns at most three commands.
 Observed successful and configured-and-observed commands retain priority;

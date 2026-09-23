@@ -1,9 +1,11 @@
 # Belay Local Developer Alpha
 
-Version: 0.0.1-alpha.8
+Version: 0.0.1-alpha.11
 License: MIT
-Platform: Apple Silicon macOS only
-Validated harnesses: Codex, Claude Code
+Platform: Apple Silicon macOS; Windows 10 (1809+) and Windows 11 on x64 (amd64)
+Unsupported: Intel macOS, Linux, and Windows arm64 (built, never published)
+Signing: none; macOS is unnotarized (Gatekeeper warning) and Windows is not Authenticode-signed (SmartScreen warning)
+Validated harnesses: Codex, Claude Code (Cursor and Google Antigravity 2.0 are supported across the engine but no clean-machine run has covered them yet)
 Teams included: no
 Network required after packaging: no (telemetry and release checks are optional)
 Product telemetry: de-identified install and daily-active ping only (belay telemetry off disables)
@@ -17,12 +19,70 @@ Belay Local combines minimized canonical AI-agent activity with
 secret-scrubbed transcript content in an encrypted one-machine store. It
 provides a loopback browser and a local MCP server over stdio.
 
+Install:
+- macOS: curl -fsSL https://getbelay.vercel.app/install | bash
+- Windows (PowerShell): irm https://getbelay.vercel.app/install.ps1 | iex
+- Windows install root: %LOCALAPPDATA%\Belay\runtime, with a belay.cmd shim in
+  %LOCALAPPDATA%\Belay\bin added to the user PATH.
+- macOS uninstall: curl -fsSL https://getbelay.vercel.app/install | bash -s -- --uninstall
+- Windows uninstall: irm ... | iex cannot pass arguments, so download the script
+  and run .\install.ps1 -Uninstall, or
+  & ([scriptblock]::Create((irm https://getbelay.vercel.app/install.ps1))) -Uninstall
+- Both uninstall paths preserve the encrypted Belay home
+  (~/.belay on macOS, %USERPROFILE%\.belay on Windows).
+
 Packaged onboarding:
-- ./bin/belay quickstart explicitly installs reversible monitor-only Codex and
-  Claude Code hooks, safely inspects supported MCP configuration, scans history,
-  starts Local, prints the URL, and attempts to open the dashboard. Claude MCP
-  registration is automatic only when status is safely understood; an absent
-  Codex entry is not added by default.
+- ./bin/belay quickstart explicitly installs reversible monitor-only Codex,
+  Claude Code, Cursor, and Antigravity hooks, safely inspects supported MCP
+  configuration, scans history, starts Local, prints the URL, and attempts to
+  open the dashboard. Claude Code, Cursor, and Antigravity MCP registration is
+  automatic only when status is safely understood; an absent Codex entry is not
+  added by default. Its stderr summary lines are
+  belay quickstart: mcp codex=... claude=... cursor=... antigravity=...,
+  hooks codex=... claude=... cursor=... antigravity=..., and
+  skill codex=... claude=... cursor=... antigravity=....
+- Cursor integration: Numbat installs monitor-only hooks into ~/.cursor/hooks.json
+  and Belay writes the live spool live/cursor.ndjson; the managed skill is
+  installed at ~/.cursor/skills/belay/SKILL.md and is invoked as /belay start,
+  /belay status, or /belay learn in Cursor Agent chat, passing harness: cursor;
+  history comes from ~/.cursor/projects/<hash>/agent-transcripts/**/*.jsonl.
+  Cursor is detected only when ~/.cursor is a real directory.
+- Cursor has no MCP configuration CLI, so belay mcp-config install|status|uninstall
+  manages the file ~/.cursor/mcp.json directly under the same ownership rules.
+  The write is atomic and idempotent, so no Codex-style opt-in flag applies.
+  Manual equivalent: add {"mcpServers": {"belay": {"command":
+  "/absolute/path/to/belay", "args": ["mcp"]}}} to ~/.cursor/mcp.json.
+- Antigravity integration (Google Antigravity 2.0, developed on macOS against
+  2.0.1; only detection, hook status, and an MCP registration round trip were
+  exercised there, and no live Antigravity session has been captured): Numbat
+  installs monitor-only hooks (PreToolUse, PostToolUse, Stop)
+  under the key numbat in the documented global hook file
+  ~/.gemini/config/hooks.json and Belay writes the live spool
+  live/antigravity.ndjson; the managed skill is installed at
+  ~/.gemini/config/skills/belay/SKILL.md and is invoked as /belay start,
+  /belay status, /belay learn, /belay pause, or /belay <issue_id> in
+  Antigravity's agent chat, passing harness: antigravity. Antigravity is
+  hook-only: the pinned Numbat performs no at-rest scan for it and numbat scan
+  --agent antigravity is rejected, so belay scan and quickstart never run a
+  historical Antigravity scan and only sessions after hooks are installed are
+  recorded. Antigravity is detected only when ~/.gemini/antigravity
+  (%USERPROFILE%\.gemini\antigravity on Windows) is a real directory; a
+  symlink does not count.
+- Antigravity has no MCP configuration CLI, so belay mcp-config
+  install|status|uninstall manages the documented global file
+  ~/.gemini/config/mcp_config.json directly under the same ownership rules as
+  Cursor (exact identity comparison, manifest-recorded priors, foreign and
+  unverifiable entries such as a serverUrl remote entry or an entry with env
+  preserved untouched, atomic private write, byte-preserving round-trip of
+  every other server and unknown key). The write is atomic and idempotent, so
+  no Codex-style opt-in flag applies. Belay creates ~/.gemini/config when it is
+  absent, refuses a symlinked path, and never touches the legacy
+  ~/.gemini/antigravity/mcp_config.json or a workspace .agents/mcp_config.json.
+  Manual equivalent: add {"mcpServers": {"belay": {"command":
+  "/absolute/path/to/belay", "args": ["mcp"]}}} to
+  ~/.gemini/config/mcp_config.json. The mcp-config usage line reads
+  Targets: codex (CLI), claude (CLI), cursor (~/.cursor/mcp.json),
+  antigravity (~/.gemini/config/mcp_config.json).
 - ./bin/belay quickstart --allow-codex-mcp-add is the explicit one-command path
   that also permits Codex mcp add after Belay strictly verifies the belay entry
   is absent. The flag accepts the Codex CLI's non-atomic duplicate-name behavior.
@@ -32,18 +92,19 @@ Packaged onboarding:
   MCP configuration, or opening a browser.
 - ./bin/belay mcp-config install --allow-codex-mcp-add is the direct opt-in
   Codex path. Install may create private Belay config/directories for a stable
-  ownership ID, but does not create/open the database or create Keychain data.
+  ownership ID, but does not create/open the database or create data-key
+  material in Keychain (macOS) or DPAPI (Windows).
 - ./bin/belay mcp-config status inspects exact ownership without mutation.
 - ./bin/belay mcp-config uninstall removes only exact Belay-owned
   registrations. Existing foreign or unverifiable entries are preserved and
   are never overwritten or removed.
-- MCP uninstall does not remove monitor hooks, Local history, Keychain data, or
-  the extracted package.
+- MCP uninstall does not remove monitor hooks, Local history, the stored data
+  key in Keychain (macOS) or DPAPI (Windows), or the extracted package.
 - Packaged commands resolve and verify sibling bin/numbat without manual pin
   flags.
 
 Exact Numbat research pin:
-f0778c09dc48281aa93a3887d05096c0a1f3f9f7
+b5172bb8bb8f1d68edc4f3b9462de7e248dc5243
 
 Implemented MCP tools:
 - list_sessions
@@ -63,14 +124,25 @@ Implemented MCP tools:
 - record_fix_applied
 
 Mission Pack behavior:
-- get_mission_pack accepts an optional current harness of claude or codex;
-  managed /belay calls always pass the actual host harness.
+- get_mission_pack accepts an optional current harness of claude, codex,
+  cursor, or antigravity; managed /belay calls always pass the actual host
+  harness.
 - A task_hint is a bounded description of the active task. It gates unanchored
   semantic correction rules so unrelated historical guidance is not surfaced.
 - No current harness means no semantic operating rules.
 - Stale, confidence-below-0.8, or unsupported semantic rules are omitted.
 - Cross-harness targets are adapted only to a safe equivalent; incompatible
-  targets are suppressed.
+  targets are suppressed. For Cursor, CLAUDE.md and Codex rules fold into
+  AGENTS.md, and .claude/settings.json items are suppressed. For Antigravity,
+  which reads project rules only from .agents/rules/*.md (never AGENTS.md or
+  CLAUDE.md), CLAUDE.md, AGENTS.md, and Codex rules targets all fold into
+  .agents/rules/belay.md, and .claude/settings.json items are suppressed.
+- propose_fix may target .cursor/rules/belay.mdc and .agents/rules/belay.md in
+  addition to the existing allowlisted harness configuration files. A new
+  .agents/rules/belay.md is seeded with the front matter trigger: always_on and
+  rules are appended as "- <rule>" lines; Antigravity's 12,000-character
+  per-rule-file limit applies, Belay owns only its own file, and the global
+  rules file ~/.gemini/GEMINI.md is never written.
 - Verification is intent-aware and limited to three commands.
 - An empty pack has no actionable guidance and cannot be activated.
 - Mission Pack guidance remains an inactive proposal with untrusted evidence
@@ -126,6 +198,76 @@ modify agents, install hooks, or perform remediation. Governed state changes
 are limited to bounded local records and lifecycle decisions.
 
 Alpha limitations:
+- Belay's semantic analysis (deterministic-issue refinement, lessons, and
+  Habits debriefs) can run through the Cursor CLI (binary agent, or
+  cursor-agent on older installs; installed by curl https://cursor.com/install
+  -fsS | bash into ~/.local/bin) as well as through Claude Code or Codex.
+  belay analyze --agent auto|claude|codex|cursor|antigravity and quickstart
+  --analyze-agent accept all four; auto prefers claude, then codex, then
+  cursor, then antigravity. Belay detects the Cursor CLI when cursor-agent is
+  on PATH, or when agent is on PATH together with a real ~/.cursor directory
+  (agent is a generic name, so the directory is required); the Cursor IDE is
+  not required. Belay runs agent -p "<fixed instruction>" --output-format json
+  --mode ask --trust --workspace <private temp dir> with the full prompt on
+  stdin (--mode ask is Cursor's read-only mode), under the user's own agent
+  login or CURSOR_API_KEY, passing no key and making no model call of its own.
+  Cursor has no schema-bound output flag, so Belay extracts the JSON document
+  from the result text and validates it against its own output schema; a
+  response that does not validate is rejected, and the model is recorded as
+  unknown. This path was written from Cursor's published documentation: the
+  Cursor CLI was not installed on the development machine, so the path was
+  not validated against a real run. A Cursor-only machine with the Cursor
+  CLI installed and signed in now gets semantic lessons and debriefs; without
+  any of the four CLIs, behavior is unchanged (sessions, evidence, and
+  deterministic issues only). The Cursor review queue
+  (list_experience_proposals with harness: cursor) still shows proposals from
+  any engine whose scope applies to Cursor, one per candidate.
+- Belay's Cursor transcript reader is built against synthetic fixtures and has
+  not been validated against a real Cursor transcript. BELAY_CURSOR_HOME
+  overrides the Cursor root for that reader only; Numbat always scans
+  ~/.cursor.
+- No clean-machine QA run has covered Cursor on macOS or Windows. On Windows
+  the Cursor paths are %USERPROFILE%\.cursor\...
+- The Antigravity CLI (binary agy, installed by curl -fsSL
+  https://antigravity.google/cli/install.sh | bash into ~/.local/bin/agy, or
+  %LOCALAPPDATA%\agy\bin on Windows) can also run Belay's semantic analysis.
+  It is a separate product from the Antigravity IDE, whose own agy launcher
+  only opens the IDE: Belay detects the CLI only when agy is on PATH, does not
+  resolve into the IDE bundle (Antigravity.app or ~/.antigravity), and
+  ~/.gemini/antigravity-cli is a real directory; the IDE is not required.
+  Belay runs agy --input-format stream-json --output-format stream-json
+  --json-schema <schema file> --sandbox, feeds one user message on stdin,
+  reads the structured_output of the result event (falling back to the
+  response text), and validates it against the schema locally as well.
+  Headless agy soft-denies any tool that needs approval, and Belay never
+  passes --dangerously-skip-permissions. agy keeps the headless conversation
+  under ~/.gemini/antigravity-cli, which Belay never reads. This path was
+  written from Google's published documentation: the Antigravity CLI was not
+  installed on the development machine, so it was not validated against a real
+  run. An analysis run by the Antigravity CLI prefers the target
+  .agents/rules/belay.md, which Mission Packs adapt to CLAUDE.md for Claude
+  Code and AGENTS.md for Codex and Cursor; Cursor-run analysis prefers
+  AGENTS.md as before. This changes which CLI performs the analysis, not which
+  sessions have transcripts: an Antigravity CLI can now write debriefs for
+  Claude Code, Codex, and Cursor sessions, while Antigravity sessions
+  themselves still have no transcript to debrief (next bullet). The
+  Antigravity review queue (list_experience_proposals with harness:
+  antigravity) still shows proposals from any engine whose scope applies to
+  Antigravity, one per candidate.
+- Antigravity stores conversations as encrypted .pb files under
+  ~/.gemini/antigravity/conversations/ and Belay has no Antigravity transcript
+  reader, so an Antigravity session gets sessions, timeline evidence, and
+  deterministic hook-based issues, but no transcript excerpts, no Habits
+  debriefs, and no transcript-derived lessons. Antigravity's hook payloads name
+  a per-conversation transcript.jsonl under
+  ~/.gemini/antigravity/brain/<id>/.system_generated/logs/, but no such file
+  existed on the validation machine, so Belay does not read it and makes no
+  claim about it.
+- Absence-based detectors stay silent for Antigravity; Belay has not verified
+  a session-terminal or approval event stream from its hooks.
+- No clean-machine QA run has covered Antigravity on macOS or Windows. On
+  Windows the Antigravity paths are %USERPROFILE%\.gemini\config\... and
+  %USERPROFILE%\.gemini\antigravity.
 - get_stats returns global Local counts only.
 - Time-window and workflow-filtered stats are unavailable.
 - Session, timeline, activity, and finding lists use bounded opaque cursors over
@@ -142,14 +284,21 @@ Alpha limitations:
 - Sessions without terminal evidence are incomplete.
 - Artifacts with belay_dirty=true are local validation output and must never be
   distributed.
+- The Windows clean-machine QA pass in
+  docs/launch/windows-clean-machine-alpha-qa.md has not been executed yet. Until
+  it does, Windows behavior beyond cross-compilation and the read-only
+  packaged smoke test is unverified on a real machine.
 
 Privacy:
 - no raw prompt bodies or transcripts in canonical events;
 - secret-scrubbed transcript content is retained separately in encrypted
   on-device payloads for local analysis and is not uploaded by Belay;
 - one de-identified usage ping (install once, active at most daily) with a
-  random telemetry ID, version, OS, arch, harness presence, and timestamp;
-  opt-out with belay telemetry off or BELAY_TELEMETRY=0;
+  random telemetry ID, version, OS (darwin or windows), arch (arm64 or amd64),
+  harness presence, and timestamp;
+  opt-out with belay telemetry off, BELAY_TELEMETRY=0, or DO_NOT_TRACK=1;
+  the receiver keeps request country, not address, and forwards the same
+  fields to a hosted analytics processor keyed by the random ID;
 - one content-free public GitHub release metadata check at most every 18
   hours; opt-out with belay updates off or BELAY_UPDATE_CHECK=0;
 - no other Belay product-network request from Local or its governed MCP tools;
@@ -159,7 +308,9 @@ Privacy:
   names, project-relative paths or basenames, model/provider labels, and
   network scheme/host values;
 - Belay does not claim prompt-injection immunity for the configured client;
-- canonical event payloads are encrypted with a macOS Keychain-backed key;
+- canonical event payloads are encrypted with a key held by the platform key
+  store: Keychain (macOS) or DPAPI (Windows), the latter wrapped per user and
+  bound to the store ID under <belay home>\keys\<store-id>.key;
 - minimized SQLite index fields remain plaintext;
 - same-user processes are outside the tamper-resistance boundary.
 
@@ -167,6 +318,8 @@ Primary documents:
 - README.md
 - docs/launch/developer-preview.md
 - docs/launch/clean-machine-alpha-qa.md
+- docs/launch/windows-clean-machine-alpha-qa.md
+- docs/launch/windows-port.md
 - docs/launch/local-v0-requirements.md
 - docs/contracts/mcp-v1.md
 - docs/contracts/read-api-v1.md

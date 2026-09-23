@@ -561,7 +561,7 @@ func TestExperienceCompilerSelectionRejectsInvalidRequest(t *testing.T) {
 	tests := []ExperienceSelectionRequest{
 		{
 			ProjectIdentity: value.Scope.ProjectIdentity,
-			Harness:         experience.Harness("cursor"),
+			Harness:         experience.Harness("windsurf"),
 			RepositoryPaths: []string{},
 		},
 		{

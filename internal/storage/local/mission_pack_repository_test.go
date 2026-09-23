@@ -417,6 +417,7 @@ func TestMissionPackFactRejectsGenericOrUntrustedContext(t *testing.T) {
 		"tail", "echo", "printf", "sh", "bash", "zsh", "fish", "dash",
 		"ksh", "csh", "tcsh", "pwsh", "powershell", "cmd.exe",
 		"belay", "belay.exe", "numbat", "claude", "codex",
+		"cursor", "cursor-agent", "antigravity", "agy",
 	} {
 		tests = append(tests, struct {
 			name      string

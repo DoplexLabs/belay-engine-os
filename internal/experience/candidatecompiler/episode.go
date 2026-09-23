@@ -36,7 +36,8 @@ type successfulProcedureRecord struct {
 	GeneratedAt        time.Time
 }
 
-type evidenceEpisode struct {
+type SuccessfulProcedureEpisode struct {
+	CandidateID  string
 	EpisodeID    string
 	SessionKey   string
 	FirstTurn    int64
@@ -48,6 +49,8 @@ type evidenceEpisode struct {
 	Supporting   []successfulProcedureRecord
 	GeneratedAt  time.Time
 }
+
+type evidenceEpisode = SuccessfulProcedureEpisode
 
 // buildEvidenceEpisodes joins successful verifiers when their deterministic
 // evidence shares at least one mutation turn in the same session. Overlap is

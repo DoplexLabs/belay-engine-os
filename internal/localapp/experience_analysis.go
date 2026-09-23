@@ -54,6 +54,8 @@ type ExperienceProjectAnalysisReport struct {
 	ProjectSessionCaps                 int      `json:"project_session_caps"`
 	CandidatesInserted                 int      `json:"candidates_inserted"`
 	CandidatesReplayed                 int      `json:"candidates_replayed"`
+	EpisodesInserted                   int      `json:"episodes_inserted"`
+	EpisodesReplayed                   int      `json:"episodes_replayed"`
 	CandidatesConsidered               int      `json:"candidates_considered"`
 	CandidatesSkippedExisting          int      `json:"candidates_skipped_existing"`
 	CandidatesSkippedInsufficient      int      `json:"candidates_skipped_insufficient"`
@@ -263,6 +265,8 @@ func analyzeExperienceProjectsOnce(
 		}
 		report.CandidatesInserted += compilation.CandidatesInserted
 		report.CandidatesReplayed += compilation.CandidatesReplayed
+		report.EpisodesInserted += compilation.EpisodesInserted
+		report.EpisodesReplayed += compilation.EpisodesReplayed
 		if err != nil {
 			if ctx.Err() != nil {
 				return report, ctx.Err()

@@ -530,6 +530,11 @@ func importTranscriptGroupSnapshotAt(
 		return errors.Join(openErrors...)
 	}
 
+	// Only Claude Code links a subagent turn to its parent through an assistant
+	// record UUID, so only a changed Claude subagent needs the primary file
+	// re-read to rebuild that map. A Cursor subagent thread carries no such
+	// field; its parent linkage is stamped by the Cursor parser from the source
+	// itself, so a Cursor group must not take this pre-pass.
 	parentToolUses := make(map[string]string)
 	if hasChangedClaudeSubagent(items) {
 		for _, item := range items {
@@ -1125,6 +1130,11 @@ func mergeTranscriptState(
 	return preferred
 }
 
+// hasChangedClaudeSubagent reports whether this group has a changed Claude
+// subagent transcript, which is the only case that needs the primary file
+// re-read for its assistant-UUID-to-tool-use map. It is deliberately gated on
+// the agent: Codex and Cursor subagent threads resolve their parent linkage
+// inside the parser and would only pay for a wasted full re-read here.
 func hasChangedClaudeSubagent(items []*openTranscriptSource) bool {
 	for _, item := range items {
 		if item.source.Agent == acquisition.AgentClaude &&

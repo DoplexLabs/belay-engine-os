@@ -58,7 +58,7 @@ func TestMigration012FreshPersistsRandomEpochAndReadyCurrentState(t *testing.T) 
 		t.Fatal(err)
 	}
 	wantEpoch := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
-	if migrations != 27 ||
+	if migrations != 30 ||
 		epoch != wantEpoch ||
 		readiness != "ready" ||
 		build != current ||

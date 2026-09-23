@@ -8,6 +8,9 @@ import (
 )
 
 const (
+	CostIssueAnalysisVersion           = "belay.cost-issues.v3"
+	RankingPolicyDeterministic         = "deterministic_v1"
+	RankingPolicyLegacy                = "legacy_v1"
 	DetectorRetryLoop                  = "retry_loop"
 	DetectorRecurringError             = "recurring_error"
 	DetectorRepeatedCorrection         = "repeated_correction"
@@ -15,6 +18,8 @@ const (
 	DetectorPermissionChurn            = "permission_churn"
 	DetectorColdStartCost              = "cold_start_cost"
 	DetectorFileThrash                 = "file_thrash"
+	DetectorFileReversal               = "file_reversal"
+	DetectorFailureRepaired            = "failure_repaired"
 	DetectorCompactionBeforeCompletion = "compaction_before_completion"
 )
 
@@ -63,20 +68,33 @@ type SuggestedFix struct {
 	Rationale  string `json:"rationale"`
 }
 
+const (
+	EvidenceBasisActionSequence    = "action_sequence"
+	EvidenceBasisTranscriptExcerpt = "transcript_excerpt"
+	EvidenceBasisRetainedActivity  = "retained_activity"
+)
+
+type EvidenceBasis struct {
+	Kind    string `json:"kind"`
+	Summary string `json:"summary"`
+}
+
 type Issue struct {
-	IssueID      string       `json:"issue_id"`
-	DetectorID   string       `json:"detector_id"`
-	Fingerprint  string       `json:"fingerprint"`
-	Headline     string       `json:"headline"`
-	Cost         Cost         `json:"cost"`
-	SessionCount int          `json:"session_count"`
-	Sessions     []SessionRef `json:"sessions"`
-	FirstSeen    time.Time    `json:"first_seen"`
-	LastSeen     time.Time    `json:"last_seen"`
-	Trend        []TrendWeek  `json:"trend"`
-	Excerpts     []Excerpt    `json:"excerpts"`
-	Project      Project      `json:"project"`
-	SuggestedFix SuggestedFix `json:"suggested_fix"`
+	IssueID       string        `json:"issue_id"`
+	DetectorID    string        `json:"detector_id"`
+	Fingerprint   string        `json:"fingerprint"`
+	Headline      string        `json:"headline"`
+	Cost          Cost          `json:"cost"`
+	SessionCount  int           `json:"session_count"`
+	Sessions      []SessionRef  `json:"sessions"`
+	FirstSeen     time.Time     `json:"first_seen"`
+	LastSeen      time.Time     `json:"last_seen"`
+	Trend         []TrendWeek   `json:"trend"`
+	Excerpts      []Excerpt     `json:"excerpts"`
+	EpisodeRefs   []string      `json:"episode_refs,omitempty"`
+	EvidenceBasis EvidenceBasis `json:"evidence_basis"`
+	Project       Project       `json:"project"`
+	SuggestedFix  SuggestedFix  `json:"suggested_fix"`
 }
 
 type ProjectConfig struct {
@@ -117,6 +135,7 @@ type Query struct {
 	Limit           int
 	ProjectIdentity string
 	DetectorID      string
+	RankingPolicy   string
 }
 
 type SemanticInput struct {

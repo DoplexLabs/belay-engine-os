@@ -58,6 +58,14 @@ func (value Candidate) Validate() error {
 			return err
 		}
 	}
+	if len(value.EpisodeRefs) > maxListItems {
+		return errors.New("candidate episode references exceed item limit")
+	}
+	for _, ref := range value.EpisodeRefs {
+		if err := validateIdentifier("candidate episode reference", ref); err != nil {
+			return err
+		}
+	}
 	for _, ref := range value.ExistingRefs {
 		if err := ref.Validate(); err != nil {
 			return fmt.Errorf("candidate existing experience reference: %w", err)
@@ -314,6 +322,14 @@ func (value Experience) Validate() error {
 	}
 	if err := value.Evidence.Validate(); err != nil {
 		return fmt.Errorf("experience evidence: %w", err)
+	}
+	if len(value.EpisodeRefs) > maxListItems {
+		return errors.New("experience episode references exceed item limit")
+	}
+	for _, ref := range value.EpisodeRefs {
+		if err := validateIdentifier("experience episode reference", ref); err != nil {
+			return err
+		}
 	}
 	if err := value.Provenance.Validate(); err != nil {
 		return fmt.Errorf("experience provenance: %w", err)

@@ -204,7 +204,8 @@ func normalizeFixTarget(value string) (string, error) {
 	}
 	switch value {
 	case "CLAUDE.md", "AGENTS.md", ".claude/settings.json",
-		".codex/config.toml", ".codex/rules/default.rules", ".cursorrules":
+		".codex/config.toml", ".codex/rules/default.rules", ".cursorrules",
+		cursorProjectRuleFile, antigravityProjectRuleFile:
 		return value, nil
 	}
 	if strings.HasPrefix(value, ".claude/hooks/") &&
@@ -262,6 +263,31 @@ func applyRuleToConfig(
 			)
 		}
 		return appendRuleLine(oldBody, "- "+rule), nil
+	case cursorProjectRuleFile:
+		// Cursor project rules are Markdown with required front matter;
+		// Cursor has no permission allowlist file.
+		if issue.SuggestedFix.Kind == "permission_allowlist" {
+			return nil, errors.New(
+				"permission fixes require a harness permission file",
+			)
+		}
+		return appendRuleLine(
+			cursorRuleFileBody(oldBody),
+			"- "+rule,
+		), nil
+	case antigravityProjectRuleFile:
+		// Antigravity project rules are Markdown with a trigger front
+		// matter; Antigravity keeps permissions in IDE settings and has no
+		// project-level permission allowlist file.
+		if issue.SuggestedFix.Kind == "permission_allowlist" {
+			return nil, errors.New(
+				"permission fixes require a harness permission file",
+			)
+		}
+		return appendRuleLine(
+			antigravityRuleFileBody(oldBody),
+			"- "+rule,
+		), nil
 	case ".codex/config.toml":
 		return nil, errors.New("unsupported Codex config fix kind")
 	case ".codex/rules/default.rules":
@@ -357,6 +383,45 @@ func claudePermissionEntry(tool, pattern string) (string, error) {
 		return "", errors.New("unsupported Claude permission tool")
 	}
 	return name + "(" + pattern + ")", nil
+}
+
+// cursorProjectRuleFile is the single Cursor project rule file Belay may
+// write. Cursor loads every .cursor/rules/*.mdc file; Belay owns only its
+// own, never another rule the user or another tool wrote.
+const cursorProjectRuleFile = ".cursor/rules/belay.mdc"
+
+const cursorRuleFrontMatter = "---\n" +
+	"description: Belay Local project rules\n" +
+	"alwaysApply: true\n---\n"
+
+// cursorRuleFileBody seeds a new Cursor rule file with the front matter
+// Cursor requires and leaves an existing file untouched.
+func cursorRuleFileBody(body []byte) []byte {
+	if len(strings.TrimSpace(string(body))) != 0 {
+		return body
+	}
+	return []byte(cursorRuleFrontMatter)
+}
+
+// antigravityProjectRuleFile is the single Antigravity project rule file
+// Belay may write. Antigravity loads every .agents/rules/*.md file at the
+// workspace root (the legacy .agent/rules/ directory is read only for
+// backward compatibility and Belay never writes it); Belay owns only its own
+// file, never another rule the user or another tool wrote. Global rules in
+// ~/.gemini/GEMINI.md are never a Belay target.
+const antigravityProjectRuleFile = ".agents/rules/belay.md"
+
+// antigravityRuleFrontMatter is the always-on trigger Antigravity expects at
+// the top of a rule file.
+const antigravityRuleFrontMatter = "---\ntrigger: always_on\n---\n"
+
+// antigravityRuleFileBody seeds a new Antigravity rule file with the front
+// matter Antigravity requires and leaves an existing file untouched.
+func antigravityRuleFileBody(body []byte) []byte {
+	if len(strings.TrimSpace(string(body))) != 0 {
+		return body
+	}
+	return []byte(antigravityRuleFrontMatter)
 }
 
 func appendRuleLine(body []byte, line string) []byte {

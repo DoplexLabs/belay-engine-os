@@ -724,7 +724,8 @@ a:focus-visible {
   grid-template-columns: minmax(0, 1fr) minmax(220px, 0.55fr) auto;
   grid-template-areas:
     "headline fix actions"
-    "metrics fix actions";
+    "metrics fix actions"
+    "basis fix actions";
   align-items: center;
   padding: 16px 20px;
 }
@@ -736,6 +737,10 @@ a:focus-visible {
 
 .report-issue-card[data-priority="secondary"] .report-issue-metrics {
   grid-area: metrics;
+}
+
+.report-issue-card[data-priority="secondary"] .issue-evidence-basis {
+  grid-area: basis;
 }
 
 .report-issue-card[data-priority="secondary"] .report-issue-preview {
@@ -1454,6 +1459,13 @@ a:focus-visible {
 
 .cost-issue-trend {
   margin-top: 12px;
+}
+
+.issue-evidence-basis {
+  margin: 10px 0 0;
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .cost-issue-fix {
@@ -5592,6 +5604,61 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 18px;
+}
+
+.habits-deterministic {
+  display: grid;
+  gap: 14px;
+}
+
+.habits-deterministic-label {
+  margin: 0;
+  color: var(--subtle);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.habits-deterministic-list {
+  display: grid;
+  gap: 10px;
+}
+
+.habits-deterministic-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.habits-deterministic-card h3,
+.habits-deterministic-card p {
+  margin: 0;
+}
+
+.habits-deterministic-card h3 {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.habits-deterministic-card > p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.habits-deterministic-next {
+  color: var(--text) !important;
+}
+
+.habits-deterministic-evidence {
+  color: var(--subtle) !important;
+  font-family: var(--mono);
+  font-size: 12px !important;
 }
 
 .habits-about {

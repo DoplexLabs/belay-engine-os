@@ -481,8 +481,11 @@ func prepareExperienceSemanticPrompt(
 			"characters. Ordinary comparison operators are allowed. Do not copy " +
 			"project_identity into those text fields. The harnesses array describes " +
 			"where the learned behavior applies, not which harness produced the evidence. " +
-			"For harness-neutral repository or code behavior, include both claude and " +
-			"codex; restrict harnesses only when the evidence itself is harness-specific. All " +
+			"For harness-neutral repository or code behavior, include claude, codex, " +
+			"cursor, and antigravity; restrict harnesses only when the evidence itself " +
+			"is harness-specific. " +
+			"The supported harnesses are claude for Claude Code, codex for Codex, " +
+			"cursor for Cursor Agent, and antigravity for Antigravity. All " +
 			"path_hints and verifier " +
 			"paths must be project-relative slash-separated paths or glob patterns; " +
 			"never emit absolute paths or parent traversal, and use an empty path_hints " +
@@ -1384,16 +1387,25 @@ func semanticProposalHarnesses(
 	return []experience.Harness{
 		experience.HarnessClaude,
 		experience.HarnessCodex,
+		experience.HarnessCursor,
+		experience.HarnessAntigravity,
 	}
 }
 
+// semanticProposalHarnessSpecificPath reports whether a path hint names a
+// harness configuration surface. Antigravity reads .agents/rules/ and, for
+// backward compatibility, the legacy .agent/rules/ directory.
 func semanticProposalHarnessSpecificPath(value string) bool {
 	value = strings.ToLower(strings.TrimPrefix(path.Clean(value), "./"))
 	return value == "claude.md" ||
 		value == "agents.md" ||
 		value == "codex.md" ||
+		value == ".cursorrules" ||
 		strings.HasPrefix(value, ".claude/") ||
-		strings.HasPrefix(value, ".codex/")
+		strings.HasPrefix(value, ".codex/") ||
+		strings.HasPrefix(value, ".cursor/") ||
+		strings.HasPrefix(value, ".agents/") ||
+		strings.HasPrefix(value, ".agent/")
 }
 
 func semanticProposalVerifier(
@@ -1709,11 +1721,16 @@ func experienceSemanticOutputSchema(
 					"path_hints":    relativePatternArray(0),
 					"harnesses": map[string]any{
 						"type":        "array",
-						"maxItems":    2,
+						"maxItems":    4,
 						"uniqueItems": true,
 						"items": map[string]any{
 							"type": "string",
-							"enum": []string{"claude", "codex"},
+							"enum": []string{
+								"claude",
+								"codex",
+								"cursor",
+								"antigravity",
+							},
 						},
 					},
 					"models":               stringArray(256),

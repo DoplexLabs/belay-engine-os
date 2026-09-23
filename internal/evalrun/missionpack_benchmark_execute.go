@@ -16,7 +16,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	acquisition "github.com/DoplexLabs/belay-engine/internal/acquisition/transcript"
@@ -128,13 +127,7 @@ func ExecuteMissionPackBenchmarkRun(
 	)
 	command.Stdout = rawEvents
 	command.Stderr = stderr
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Cancel = func() error {
-		if command.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-	}
+	configureBenchmarkProcessGroup(command)
 	command.WaitDelay = 5 * time.Second
 
 	startedAt := time.Now().UTC()

@@ -52,8 +52,8 @@ func TestMigration017FreshSchemaAndMutationGuards(t *testing.T) {
 	).Scan(&triggers); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 27 || triggers != 116 {
-		t.Fatalf("migrations/triggers = %d/%d, want 27/116", migrations, triggers)
+	if migrations != 30 || triggers != 125 {
+		t.Fatalf("migrations/triggers = %d/%d, want 30/125", migrations, triggers)
 	}
 
 	var decisionProjectIndex string
@@ -148,7 +148,10 @@ func TestMigration017Upgrades016WithoutChangingExistingRows(t *testing.T) {
 			entry.Name() == "024_experience_impact_observations.sql" ||
 			entry.Name() == "025_issue_cost_attribution.sql" ||
 			entry.Name() == "026_habit_debriefs.sql" ||
-			entry.Name() == "027_transcript_price_versions.sql" {
+			entry.Name() == "027_transcript_price_versions.sql" ||
+			entry.Name() == "028_cost_issue_analysis_version.sql" ||
+			entry.Name() == "029_session_identity_observations.sql" ||
+			entry.Name() == "030_evidence_episodes.sql" {
 			continue
 		}
 		version++
@@ -203,7 +206,7 @@ func TestMigration017Upgrades016WithoutChangingExistingRows(t *testing.T) {
 	).Scan(&existing); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 27 || existing != 1 {
-		t.Fatalf("post-upgrade migrations/existing rows = %d/%d, want 27/1", migrations, existing)
+	if migrations != 30 || existing != 1 {
+		t.Fatalf("post-upgrade migrations/existing rows = %d/%d, want 30/1", migrations, existing)
 	}
 }

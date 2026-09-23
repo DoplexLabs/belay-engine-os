@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DoplexLabs/belay-engine/internal/evidenceepisode"
 	"github.com/DoplexLabs/belay-engine/internal/issueintel"
 	"github.com/DoplexLabs/belay-engine/internal/transcript"
 	"github.com/DoplexLabs/belay-engine/internal/userinsights"
@@ -22,6 +23,7 @@ const (
 	userInsightCandidateLimit      = 100
 	userInsightTurnLimit           = 10000
 	userInsightMinUserTurns        = 2
+	userInsightSignalLimit         = 5
 )
 
 // ErrUserInsightsUnavailable is returned when Local has no transcript
@@ -86,8 +88,22 @@ type UserInsightsRequest struct {
 type UserInsightSession struct {
 	userinsights.Retro
 	Project       string                      `json:"project"`
+	Signals       []UserInsightSignal         `json:"signals"`
 	DebriefStatus string                      `json:"debrief_status"`
 	Debrief       *userinsights.DebriefRecord `json:"debrief"`
+}
+
+// UserInsightSignal is a safe, deterministic summary of one persisted
+// evidence episode. It intentionally excludes commands, paths, transcript
+// text, and internal derivation metadata.
+type UserInsightSignal struct {
+	EpisodeID string          `json:"episode_id"`
+	Kind      string          `json:"kind"`
+	Title     string          `json:"title"`
+	Summary   string          `json:"summary"`
+	FirstTurn int64           `json:"first_turn"`
+	LastTurn  int64           `json:"last_turn"`
+	Cost      issueintel.Cost `json:"cost"`
 }
 
 const (
@@ -164,11 +180,8 @@ func (s *Service) GetUserInsights(
 		result.Harness = UserInsightsHarness{Available: ok, Name: strings.TrimSpace(name)}
 	}
 
+	eligible := make([]transcript.Session, 0, len(candidates))
 	for _, session := range candidates {
-		if len(result.Sessions) >= limit {
-			result.Coverage.HasMore = true
-			break
-		}
 		if session.Coverage != transcript.CoverageComplete {
 			result.Coverage.SkippedIncomplete++
 			continue
@@ -177,6 +190,19 @@ func (s *Service) GetUserInsights(
 			result.Coverage.SkippedShort++
 			continue
 		}
+		eligible = append(eligible, session)
+	}
+	sessionKeys := make([]string, 0, len(eligible))
+	for _, session := range eligible {
+		sessionKeys = append(sessionKeys, session.SessionKey)
+	}
+	episodes := s.evidenceEpisodesForSessions(ctx, sessionKeys)
+	selected := prioritizeUserInsightSessions(eligible, episodes, limit)
+	if len(eligible) > len(selected) {
+		result.Coverage.HasMore = true
+	}
+
+	for _, session := range selected {
 		turns, err := s.userInsightRepository.QueryTranscriptTurns(
 			ctx,
 			session.SessionKey,
@@ -202,6 +228,7 @@ func (s *Service) GetUserInsights(
 		result.Sessions = append(result.Sessions, UserInsightSession{
 			Retro:         retro,
 			Project:       transcriptProjectLabel(session),
+			Signals:       userInsightSignals(episodes[session.SessionKey]),
 			DebriefStatus: DebriefStatusMissing,
 		})
 		result.Coverage.EvaluatedSessions++
@@ -252,6 +279,72 @@ func (s *Service) GetUserInsights(
 		result.Sessions[index].Project = strings.TrimSpace(result.Sessions[index].Project)
 	}
 	return result, nil
+}
+
+func prioritizeUserInsightSessions(
+	sessions []transcript.Session,
+	episodes map[string][]evidenceepisode.Episode,
+	limit int,
+) []transcript.Session {
+	if limit <= 0 || len(sessions) == 0 {
+		return []transcript.Session{}
+	}
+	result := make([]transcript.Session, 0, min(limit, len(sessions)))
+	selected := make(map[string]bool, min(limit, len(sessions)))
+	priorityLimit := min(3, limit)
+	for _, session := range sessions {
+		if len(userInsightSignals(episodes[session.SessionKey])) == 0 {
+			continue
+		}
+		result = append(result, session)
+		selected[session.SessionKey] = true
+		if len(result) >= priorityLimit {
+			break
+		}
+	}
+	for _, session := range sessions {
+		if len(result) >= limit {
+			break
+		}
+		if selected[session.SessionKey] {
+			continue
+		}
+		result = append(result, session)
+	}
+	return result
+}
+
+func userInsightSignals(
+	episodes []evidenceepisode.Episode,
+) []UserInsightSignal {
+	result := make([]UserInsightSignal, 0, len(episodes))
+	for _, episode := range episodes {
+		signal := UserInsightSignal{
+			EpisodeID: episode.EpisodeID,
+			Kind:      episode.Kind,
+			FirstTurn: episode.FirstTurn,
+			LastTurn:  episode.LastTurn,
+			Cost:      episode.Cost,
+		}
+		switch episode.Kind {
+		case evidenceepisode.KindFailureRepair:
+			signal.Title = "A failed command was recovered"
+			signal.Summary = "Belay observed an explicit failure followed by a different successful command in the same repair family."
+		case evidenceepisode.KindMutationVerification:
+			signal.Title = "Changes were followed by a passing check"
+			signal.Summary = "Belay observed file changes followed by an explicit successful verification result."
+		default:
+			continue
+		}
+		result = append(result, signal)
+		if len(result) >= userInsightSignalLimit {
+			break
+		}
+	}
+	if result == nil {
+		return []UserInsightSignal{}
+	}
+	return result
 }
 
 // GetUserInsightDebrief reads one stored debrief without generating.

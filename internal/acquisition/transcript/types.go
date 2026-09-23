@@ -1,5 +1,5 @@
-// Package transcript reads native Claude Code and Codex JSONL transcripts
-// into Belay Local's encrypted transcript sidecar model.
+// Package transcript reads native Claude Code, Codex and Cursor JSONL
+// transcripts into Belay Local's encrypted transcript sidecar model.
 package transcript
 
 import (
@@ -12,6 +12,7 @@ import (
 const (
 	AgentClaude = "claude-code"
 	AgentCodex  = "codex"
+	AgentCursor = "cursor"
 )
 
 type Source struct {
@@ -20,6 +21,13 @@ type Source struct {
 	GroupKey        string
 	NativeSessionID string
 	Primary         bool
+	// ProjectKey is an opaque per-project key taken from the harness directory
+	// layout when the layout names one. Cursor stores transcripts under
+	// ~/.cursor/projects/<hash>/, and that <hash> is not documented as a
+	// reversible encoding of the workspace path, so Belay never decodes it: it
+	// is carried only to keep transcripts of different projects in distinct
+	// groups. The real working directory comes from the records themselves.
+	ProjectKey string
 }
 
 type State struct {

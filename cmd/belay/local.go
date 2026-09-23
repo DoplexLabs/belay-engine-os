@@ -18,6 +18,7 @@ import (
 	"github.com/DoplexLabs/belay-engine/internal/canonical/model"
 	"github.com/DoplexLabs/belay-engine/internal/detection"
 	"github.com/DoplexLabs/belay-engine/internal/initialization"
+	"github.com/DoplexLabs/belay-engine/internal/issueintel"
 	"github.com/DoplexLabs/belay-engine/internal/localaction"
 	"github.com/DoplexLabs/belay-engine/internal/localapp"
 	"github.com/DoplexLabs/belay-engine/internal/presentation/localhttp"
@@ -193,7 +194,7 @@ var (
 		return server.Start(ctx, address)
 	}
 	openLocalCommandStore = func(path string) (*local.Store, error) {
-		return local.Open(path, local.NewMacOSKeychainProvider())
+		return local.Open(path, local.NewPlatformKeyProvider(path))
 	}
 	newLocalMCPCommandServer = func(
 		store *local.Store,
@@ -364,7 +365,7 @@ func isPackagedSiblingNumbat(belayExecutable, numbatExecutable string) bool {
 		return false
 	}
 	return filepath.Clean(numbatPath) ==
-		filepath.Clean(filepath.Join(filepath.Dir(belayPath), "numbat"))
+		filepath.Clean(filepath.Join(filepath.Dir(belayPath), localapp.NumbatExecutableName()))
 }
 
 func runLocal(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -377,7 +378,12 @@ func runLocal(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		string(localhttp.ExperienceCurrent),
 		"Local experience: current or value-first",
 	)
-	installHooks := flags.Bool("install-hooks", false, "explicitly install monitor-only live hooks for Codex and Claude Code")
+	installHooks := flags.Bool(
+		"install-hooks",
+		false,
+		"explicitly install monitor-only live hooks for Codex, Claude Code, Cursor, "+
+			"and Antigravity",
+	)
 	noScan := flags.Bool("no-scan", false, "skip the initial historical scan")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -403,10 +409,10 @@ func runQuickstart(ctx context.Context, args []string, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, `usage: belay quickstart [options]
 
 Explicitly initializes private Belay Local state, verifies packaged Numbat,
-installs monitor-only hooks for detected Codex and Claude Code installations,
-installs user-scoped Local MCP registration and the Belay skill for detected
-harnesses, imports local activity, scans local history, and opens a
-loopback-only browser.
+installs monitor-only hooks for detected Codex, Claude Code, Cursor, and
+Antigravity installations, installs user-scoped Local MCP registration and the
+Belay skill for detected harnesses, imports local activity, scans local
+history, and opens a loopback-only browser.
 Full local transcripts are retained encrypted on-device. Optional outbound
 requests are a de-identified usage ping and a content-free GitHub release
 check every 18 hours; belay telemetry off and belay updates off disable them.
@@ -430,12 +436,13 @@ Options:`)
 	noAnalyze := flags.Bool(
 		"no-analyze",
 		false,
-		"skip semantic issue refinement with an installed Claude Code or Codex harness",
+		"skip semantic issue refinement with an installed Claude Code, Codex, "+
+			"Cursor CLI, or Antigravity CLI harness",
 	)
 	analyzeAgent := flags.String(
 		"analyze-agent",
 		"auto",
-		"semantic analysis harness: auto, claude, or codex",
+		"semantic analysis harness: auto, claude, codex, cursor, or antigravity",
 	)
 	allowCodexMCPAdd := flags.Bool(
 		"allow-codex-mcp-add",
@@ -635,27 +642,45 @@ func onboardBelaySkills(
 	inventory, _, discoveryErr := client.Discover(discoveryCtx)
 	cancel()
 	if discoveryErr != nil {
-		fmt.Fprintln(
+		fmt.Fprintf(
 			stderr,
-			"belay quickstart: skill codex=unavailable claude=unavailable",
+			"belay quickstart: skill %s\n",
+			formatAgentStatuses(nil, "unavailable"),
 		)
 		return false
 	}
 	results, installErr := localapp.InstallBelaySkills(inventory)
-	statuses := map[string]string{
-		"codex":  "unavailable",
-		"claude": "unavailable",
-	}
+	statuses := make(map[string]string, len(results))
 	for _, result := range results {
 		statuses[result.Agent] = result.Status
 	}
 	fmt.Fprintf(
 		stderr,
-		"belay quickstart: skill codex=%s claude=%s\n",
-		statuses["codex"],
-		statuses["claude"],
+		"belay quickstart: skill %s\n",
+		formatAgentStatuses(statuses, "unavailable"),
 	)
 	return installErr == nil
+}
+
+// formatAgentStatuses renders one agent=status pair per supported harness in
+// the fixed order Belay reports them, so the line stays parseable as harnesses
+// are added. Agents missing from statuses fall back to fallback.
+func formatAgentStatuses(statuses map[string]string, fallback string) string {
+	var builder strings.Builder
+	for _, agent := range numbat.SupportedAgents() {
+		name := agent.String()
+		status := fallback
+		if value, ok := statuses[name]; ok && value != "" {
+			status = value
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte(' ')
+		}
+		builder.WriteString(name)
+		builder.WriteByte('=')
+		builder.WriteString(status)
+	}
+	return builder.String()
 }
 
 func runQuickstartSemanticAnalysis(
@@ -673,7 +698,7 @@ func runQuickstartSemanticAnalysis(
 	}
 	harness, err := selectSemanticHarness(inventory, preferred)
 	if err != nil {
-		if strings.Contains(err.Error(), "no Claude Code or Codex harness") {
+		if errors.Is(err, errNoSemanticHarness) {
 			fmt.Fprintln(
 				stderr,
 				"belay quickstart: semantic analysis skipped; no supported harness detected",
@@ -732,6 +757,10 @@ func runHistoricalScan(
 	}()
 	numbatErr := <-numbatDone
 	transcriptErr := <-transcriptDone
+	var identityErr error
+	if ctx.Err() == nil {
+		_, identityErr = store.ReconcileSessionIdentityLinks(ctx)
+	}
 	if numbatErr != nil && ctx.Err() == nil {
 		fmt.Fprintf(
 			stderr,
@@ -747,7 +776,14 @@ func runHistoricalScan(
 			commandName,
 		)
 	}
-	return errors.Join(numbatErr, transcriptErr)
+	if identityErr != nil && ctx.Err() == nil {
+		fmt.Fprintf(
+			stderr,
+			"belay %s: session evidence reconciliation incomplete; Local will continue\n",
+			commandName,
+		)
+	}
+	return errors.Join(numbatErr, transcriptErr, identityErr)
 }
 
 func pollTranscripts(
@@ -801,6 +837,15 @@ func runIntelligenceWorkers(
 	commandName string,
 	stderr io.Writer,
 ) error {
+	if _, err := store.ReconcileSessionIdentityLinks(ctx); err != nil &&
+		!errors.Is(err, context.Canceled) &&
+		ctx.Err() == nil {
+		fmt.Fprintf(
+			stderr,
+			"belay %s: session evidence reconciliation delayed; background analysis will continue\n",
+			commandName,
+		)
+	}
 	transcriptDone := make(chan struct{})
 	go func() {
 		defer close(transcriptDone)
@@ -994,8 +1039,11 @@ func newLocalHTTPServer(
 		readmodel.WithTranscriptRepository(store),
 		readmodel.WithUserInsightRepository(store),
 		readmodel.WithHabitDebriefRepository(store),
+		readmodel.WithEvidenceEpisodeRepository(store),
+		readmodel.WithFusedSessionReads(experimentalFusedSessionReadsEnabled()),
 		readmodel.WithUserInsightHarness(habits.Harness),
 		readmodel.WithCostIssueRepository(store),
+		readmodel.WithCostIssueRankingPolicy(costIssueRankingPolicy()),
 	}
 	if len(providers) > 0 && providers[0] != nil {
 		readOptions = append(
@@ -1066,6 +1114,10 @@ func newLocalMCPServer(store *local.Store) (*localmcp.Server, error) {
 		readmodel.WithIssueRepository(store),
 		readmodel.WithIssueCursorCodec(store),
 		readmodel.WithCostIssueRepository(store),
+		readmodel.WithCostIssueRankingPolicy(costIssueRankingPolicy()),
+		readmodel.WithEvidenceEpisodeRepository(store),
+		readmodel.WithTranscriptRepository(store),
+		readmodel.WithFusedSessionReads(experimentalFusedSessionReadsEnabled()),
 	),
 		localmcp.WithCostIssueFixService(fixService),
 		localmcp.WithMissionPackService(missionPacks),
@@ -1075,6 +1127,27 @@ func newLocalMCPServer(store *local.Store) (*localmcp.Server, error) {
 			localmcp.AdaptExperienceLearningService(experienceLearning),
 		),
 	)
+}
+
+func experimentalFusedSessionReadsEnabled() bool {
+	switch strings.ToLower(
+		strings.TrimSpace(os.Getenv("BELAY_EXPERIMENTAL_FUSED_SESSION_READS")),
+	) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func costIssueRankingPolicy() string {
+	if strings.EqualFold(
+		strings.TrimSpace(os.Getenv("BELAY_COST_ISSUE_RANKING")),
+		"legacy",
+	) {
+		return issueintel.RankingPolicyLegacy
+	}
+	return issueintel.RankingPolicyDeterministic
 }
 
 func onboardLocalHooks(
@@ -1111,10 +1184,7 @@ func onboardHooks(
 		}
 		return hookErr == nil
 	}
-	statuses := map[string]string{
-		"codex":  "skipped_not_detected",
-		"claude": "skipped_not_detected",
-	}
+	statuses := make(map[string]string, len(results))
 	for _, result := range results {
 		status := "configured"
 		if result.Error != "" {
@@ -1122,18 +1192,15 @@ func onboardHooks(
 		}
 		statuses[result.Agent] = status
 	}
-	if hookErr != nil {
-		if len(results) == 0 {
-			statuses["codex"] = "unavailable"
-			statuses["claude"] = "unavailable"
-		}
+	fallback := "skipped_not_detected"
+	if hookErr != nil && len(results) == 0 {
+		fallback = "unavailable"
 	}
 	fmt.Fprintf(
 		stderr,
-		"belay %s: hooks codex=%s claude=%s\n",
+		"belay %s: hooks %s\n",
 		commandName,
-		statuses["codex"],
-		statuses["claude"],
+		formatAgentStatuses(statuses, fallback),
 	)
 	return hookErr == nil
 }
@@ -1150,11 +1217,12 @@ type cliInventory struct {
 }
 
 func projectCLIInventory(inventory numbat.Inventory) cliInventory {
+	supported := numbat.SupportedAgents()
 	result := cliInventory{
-		Rows:          make([]cliInventoryRow, 0, 2),
-		LaunchTargets: make(map[string]cliInventoryRow, 2),
+		Rows:          make([]cliInventoryRow, 0, len(supported)),
+		LaunchTargets: make(map[string]cliInventoryRow, len(supported)),
 	}
-	for _, agent := range []numbat.Agent{numbat.AgentCodex, numbat.AgentClaude} {
+	for _, agent := range supported {
 		row, ok := inventory.LaunchTargets[agent]
 		if !ok {
 			continue
@@ -1190,6 +1258,7 @@ func runScan(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	inventory, reports, err := discoverAndScan(ctx, runtime.client, store, runtime.config)
 	transcriptErr := scanTranscripts(ctx, runtime.paths, store)
 	appendedTranscriptErr := drainScanTranscripts(ctx, runtime.paths, store)
+	_, identityErr := store.ReconcileSessionIdentityLinks(ctx)
 	writeErr := writeJSON(stdout, map[string]any{
 		"inventory": projectCLIInventory(inventory),
 		"scans":     reports,
@@ -1199,6 +1268,7 @@ func runScan(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		err,
 		transcriptErr,
 		appendedTranscriptErr,
+		identityErr,
 		writeErr,
 	)
 }
@@ -1225,14 +1295,28 @@ func runAgents(ctx context.Context, args []string, stdout, stderr io.Writer) err
 
 func runHooks(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
+		printHooksUsage(stderr)
 		return errors.New("hooks requires install, status, or uninstall")
 	}
 	action := args[0]
+	if isHelpArgument(action) {
+		printHooksUsage(stdout)
+		return nil
+	}
 	if action != "install" && action != "status" && action != "uninstall" {
+		printHooksUsage(stderr)
 		return fmt.Errorf("unknown hooks action %q", action)
 	}
 	flags := flag.NewFlagSet("hooks "+action, flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	flags.Usage = func() {
+		fmt.Fprintf(stderr, "usage: belay hooks %s [flags]\n", action)
+		fmt.Fprintln(
+			stderr,
+			"Targets: codex, claude (Claude Code), cursor, antigravity. Hooks are monitor-only.",
+		)
+		flags.PrintDefaults()
+	}
 	runtimeFlags := addLocalRuntimeFlags(flags)
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -1246,6 +1330,25 @@ func runHooks(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 	return hookErr
+}
+
+func printHooksUsage(writer io.Writer) {
+	fmt.Fprintln(writer, `usage: belay hooks ACTION [flags]
+
+Actions:
+  status      show whether monitor-only hooks are installed for each agent
+  install     install monitor-only hooks for detected agents
+  uninstall   remove Belay hooks
+
+Examples:
+  belay hooks status
+  belay hooks install
+
+Run belay hooks ACTION -h for the flags of one action.`)
+}
+
+func isHelpArgument(argument string) bool {
+	return argument == "help" || argument == "-h" || argument == "--help"
 }
 
 func runMCP(ctx context.Context, args []string, stderr io.Writer) error {
@@ -1537,6 +1640,10 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	inventory, command, discoverErr := runtime.client.Discover(discoveryCtx)
 	analysisStatus, analysisErr := loadDoctorAnalysis(ctx, store)
 	transcriptCoverage, transcriptErr := loadDoctorTranscriptCoverage(ctx, store)
+	_, identityReconcileErr := store.ReconcileSessionIdentityLinks(ctx)
+	identityAudit, identityReadErr := store.ReadSessionIdentityAudit(ctx)
+	identityErr := errors.Join(identityReconcileErr, identityReadErr)
+	episodeAudit, episodeErr := store.ReadEvidenceEpisodeAudit(ctx)
 	status := map[string]any{
 		"config":                 "ok",
 		"encrypted_storage":      "ok",
@@ -1555,6 +1662,16 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	} else {
 		status["transcript_coverage"] = transcriptCoverage
 	}
+	if identityErr != nil {
+		status["session_identity"] = "failed"
+	} else {
+		status["session_identity"] = identityAudit
+	}
+	if episodeErr != nil {
+		status["evidence_episodes"] = "failed"
+	} else {
+		status["evidence_episodes"] = episodeAudit
+	}
 	if discoverErr != nil {
 		status["discovery"] = "failed"
 		status["numbat_exit_code"] = command.ExitCode
@@ -1564,7 +1681,13 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := writeJSON(stdout, status); err != nil {
 		return err
 	}
-	return errors.Join(discoverErr, analysisErr, transcriptErr)
+	return errors.Join(
+		discoverErr,
+		analysisErr,
+		transcriptErr,
+		identityErr,
+		episodeErr,
+	)
 }
 
 type doctorAnalysisStatus struct {

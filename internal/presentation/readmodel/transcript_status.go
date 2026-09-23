@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/DoplexLabs/belay-engine/internal/canonical/model"
+	"github.com/DoplexLabs/belay-engine/internal/sessionidentity"
 	"github.com/DoplexLabs/belay-engine/internal/transcript"
 )
 
@@ -40,11 +41,26 @@ type SessionProjectRepository interface {
 	) (map[string]transcript.Session, error)
 }
 
+type SessionIdentityRepository interface {
+	QueryActiveSessionIdentityAliases(
+		context.Context,
+		[]string,
+	) (map[string]sessionidentity.ActiveAlias, error)
+}
+
 // WithSessionProjectRepository wires the transcript join for session rows.
 func WithSessionProjectRepository(repository SessionProjectRepository) Option {
 	return func(service *Service) {
 		if service != nil {
 			service.sessionProjectRepository = repository
+		}
+	}
+}
+
+func WithFusedSessionReads(enabled bool) Option {
+	return func(service *Service) {
+		if service != nil {
+			service.fusedSessionReads = enabled
 		}
 	}
 }
@@ -76,8 +92,45 @@ func (s *Service) decorateSessionProjects(
 	if err != nil {
 		return
 	}
+	aliases := make(map[string]sessionidentity.ActiveAlias)
+	if s.fusedSessionReads && s.sessionIdentityRepository != nil {
+		var missing []string
+		for _, key := range keys {
+			if _, ok := records[key]; !ok {
+				missing = append(missing, key)
+			}
+		}
+		if len(missing) > 0 {
+			aliases, err = s.sessionIdentityRepository.
+				QueryActiveSessionIdentityAliases(joinCtx, missing)
+			if err == nil && len(aliases) > 0 {
+				linkedKeys := make([]string, 0, len(aliases))
+				seen := make(map[string]bool)
+				for _, alias := range aliases {
+					if alias.LinkedSessionKey != "" &&
+						!seen[alias.LinkedSessionKey] {
+						seen[alias.LinkedSessionKey] = true
+						linkedKeys = append(linkedKeys, alias.LinkedSessionKey)
+					}
+				}
+				linked, linkedErr := s.sessionProjectRepository.
+					QueryTranscriptSessionsByKeys(joinCtx, linkedKeys)
+				if linkedErr == nil {
+					for key, value := range linked {
+						records[key] = value
+					}
+				}
+			}
+		}
+	}
 	for index := range sessions {
-		record, ok := records[strings.TrimSpace(sessions[index].SessionID)]
+		sessionKey := strings.TrimSpace(sessions[index].SessionID)
+		record, ok := records[sessionKey]
+		if !ok {
+			if alias, exists := aliases[sessionKey]; exists {
+				record, ok = records[alias.LinkedSessionKey]
+			}
+		}
 		if !ok {
 			continue
 		}
@@ -131,6 +184,10 @@ func WithTranscriptRepository(repository TranscriptRepository) Option {
 			if projects, ok := repository.(SessionProjectRepository); ok &&
 				service.sessionProjectRepository == nil {
 				service.sessionProjectRepository = projects
+			}
+			if identities, ok := repository.(SessionIdentityRepository); ok &&
+				service.sessionIdentityRepository == nil {
+				service.sessionIdentityRepository = identities
 			}
 		}
 	}
@@ -298,6 +355,10 @@ func harnessProjectLabel(value string) string {
 		return "Claude Code"
 	case "codex":
 		return "Codex"
+	case "cursor", "cursor-agent":
+		return "Cursor"
+	case "antigravity":
+		return "Antigravity"
 	default:
 		return strings.TrimSpace(value)
 	}

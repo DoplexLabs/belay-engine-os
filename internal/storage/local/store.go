@@ -170,7 +170,7 @@ func sqliteDSN(path string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("resolve local database path: %w", err)
 		}
-		databaseURL = url.URL{Scheme: "file", Path: filepath.ToSlash(absolute)}
+		databaseURL = url.URL{Scheme: "file", Path: sqliteURIPath(filepath.ToSlash(absolute))}
 	}
 
 	query := databaseURL.Query()
@@ -181,6 +181,17 @@ func sqliteDSN(path string) (string, error) {
 	query.Set("_txlock", "exclusive")
 	databaseURL.RawQuery = query.Encode()
 	return databaseURL.String(), nil
+}
+
+// sqliteURIPath roots a slash-separated absolute path for a file: URI. A
+// Windows drive path such as C:/profile/belay.sqlite must become
+// /C:/profile/belay.sqlite; otherwise the URI renders as file://C:/... and
+// SQLite rejects "C:" as the URI authority.
+func sqliteURIPath(slashed string) string {
+	if strings.HasPrefix(slashed, "/") {
+		return slashed
+	}
+	return "/" + slashed
 }
 
 func (s *Store) Close() error {
@@ -1683,6 +1694,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			err = withMutationTx(ctx, tx, mutationProjectionRebuild, apply)
 		} else if version == 25 || version == 27 {
 			err = withMutationTx(ctx, tx, mutationTranscriptIngestion, apply)
+		} else if version == 28 || version == 30 {
+			err = withMutationTx(ctx, tx, mutationCostIssueAnalysis, apply)
 		} else {
 			err = apply()
 		}

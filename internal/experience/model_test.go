@@ -827,3 +827,52 @@ func validEvidenceSet() EvidenceSet {
 func sha256Value(value string) string {
 	return contentHash(value)
 }
+
+func TestHarnessValidCoversEverySupportedHarness(t *testing.T) {
+	for _, harness := range []Harness{
+		HarnessClaude,
+		HarnessCodex,
+		HarnessCursor,
+		HarnessAntigravity,
+	} {
+		if !harness.Valid() {
+			t.Fatalf("harness %q is not valid", harness)
+		}
+	}
+	for _, harness := range []Harness{
+		"", "windsurf", "Cursor", "cursor ", "Antigravity", "agy",
+	} {
+		if harness.Valid() {
+			t.Fatalf("harness %q was accepted", harness)
+		}
+	}
+}
+
+func TestScopeAcceptsCursorHarness(t *testing.T) {
+	value := validExperience(t, LifecycleApproved)
+	value.Scope.Harnesses = []Harness{HarnessCursor}
+	value.ContentHash = value.CanonicalContentHash()
+	value.Governance.Approval.ProposedContentHash = value.ContentHash
+	value.Governance.Approval.ApprovedContentHash = value.ContentHash
+	if err := value.Validate(); err != nil {
+		t.Fatalf("cursor-scoped experience rejected: %v", err)
+	}
+	value.Scope.Harnesses = []Harness{Harness("windsurf")}
+	value.ContentHash = value.CanonicalContentHash()
+	value.Governance.Approval.ProposedContentHash = value.ContentHash
+	value.Governance.Approval.ApprovedContentHash = value.ContentHash
+	if err := value.Validate(); err == nil {
+		t.Fatal("unsupported scope harness accepted")
+	}
+}
+
+func TestScopeAcceptsAntigravityHarness(t *testing.T) {
+	value := validExperience(t, LifecycleApproved)
+	value.Scope.Harnesses = []Harness{HarnessAntigravity}
+	value.ContentHash = value.CanonicalContentHash()
+	value.Governance.Approval.ProposedContentHash = value.ContentHash
+	value.Governance.Approval.ApprovedContentHash = value.ContentHash
+	if err := value.Validate(); err != nil {
+		t.Fatalf("antigravity-scoped experience rejected: %v", err)
+	}
+}

@@ -44,8 +44,10 @@ const (
 type Harness string
 
 const (
-	HarnessClaude Harness = "claude"
-	HarnessCodex  Harness = "codex"
+	HarnessClaude      Harness = "claude"
+	HarnessCodex       Harness = "codex"
+	HarnessCursor      Harness = "cursor"
+	HarnessAntigravity Harness = "antigravity"
 )
 
 const (
@@ -141,6 +143,7 @@ type SourceRef struct {
 	IssueID         string     `json:"issue_id,omitempty"`
 	InsightID       string     `json:"insight_id,omitempty"`
 	CandidateID     string     `json:"candidate_id,omitempty"`
+	EpisodeID       string     `json:"episode_id,omitempty"`
 	SessionKey      string     `json:"session_key,omitempty"`
 	TurnIndex       *int64     `json:"turn_index,omitempty"`
 	EventID         string     `json:"event_id,omitempty"`

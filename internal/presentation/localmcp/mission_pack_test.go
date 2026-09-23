@@ -919,7 +919,7 @@ func TestMissionPackToolRejectsInvalidInputs(t *testing.T) {
 			name: "invalid harness",
 			args: map[string]any{
 				"cwd":     "/tmp/example",
-				"harness": "cursor",
+				"harness": "windsurf",
 			},
 		},
 		{

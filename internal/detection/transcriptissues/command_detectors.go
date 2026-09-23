@@ -284,15 +284,22 @@ func detectPermissionChurn(
 		if len(values) < 5 || denials[pattern] {
 			continue
 		}
+		// Each harness keeps its command allowlist in its own file, so the
+		// advice names the file of whichever harness these approvals mostly
+		// came from. Cursor needs its own case rather than following either
+		// neighbour: it shares neither Claude Code's settings.json nor Codex's
+		// rules file, and its CLI keeps permissions in .cursor/cli.json. Codex
+		// stays the fallback, as before.
 		target := ".codex/rules/default.rules"
-		claude := 0
+		counts := make(map[string]int, 3)
 		for _, value := range values {
-			if value.session.metadata.Agent == "claude-code" {
-				claude++
-			}
+			counts[value.session.metadata.Agent]++
 		}
-		if claude*2 >= len(values) {
+		switch {
+		case counts["claude-code"]*2 >= len(values):
 			target = ".claude/settings.json"
+		case counts["cursor"]*2 >= len(values):
+			target = ".cursor/cli.json"
 		}
 		for _, value := range values {
 			first, last := observedBounds(value.call, value.user)
@@ -362,6 +369,12 @@ func detectFileThrash(
 			if len(edits) < 4 && !cycle {
 				continue
 			}
+			detectorID := issueintel.DetectorFileThrash
+			rationale := "This file was edited repeatedly. Retain the observation for evidence, but do not treat edit count alone as a default issue."
+			if cycle {
+				detectorID = issueintel.DetectorFileReversal
+				rationale = "The file returned to an earlier edit state. Inspect the conflicting approaches and preserve the verified one before editing it again."
+			}
 			cost := selectedTurnCost(edits)
 			excerpts := make([]issueintel.Excerpt, 0, maxExcerpts)
 			for _, edit := range edits {
@@ -397,7 +410,7 @@ func detectFileThrash(
 					valueExcerpts = excerpts
 				}
 				result = append(result, observation{
-					detectorID:  issueintel.DetectorFileThrash,
+					detectorID:  detectorID,
 					fingerprint: file,
 					subject:     "`" + file + "`",
 					cost:        valueCost,
@@ -410,7 +423,7 @@ func detectFileThrash(
 					fix: issueintel.SuggestedFix{
 						Kind:       "harness_rule",
 						TargetFile: instructionTarget(project),
-						Rationale:  "Require the agent to inspect and plan the complete file change before editing, then verify once after the coherent edit.",
+						Rationale:  rationale,
 					},
 				})
 			}

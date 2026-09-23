@@ -72,7 +72,7 @@ func (s *Server) getUserInsightDebrief(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, localapp.ErrHabitHarnessUnavailable):
 		writeProblemType(w, r, http.StatusServiceUnavailable,
 			"belay.local/habits-harness-unavailable", "No harness available",
-			"Belay needs Claude Code or Codex installed on this machine to write a debrief.")
+			"Belay needs Claude Code, Codex, the Cursor CLI, or the Antigravity CLI installed on this machine to write a debrief.")
 	case errors.Is(err, localapp.ErrHabitSessionNotFound):
 		writeProblem(w, r, http.StatusNotFound, "Not found", "That session is not in the transcript store.")
 	case errors.Is(err, localapp.ErrHabitSessionNotReady):

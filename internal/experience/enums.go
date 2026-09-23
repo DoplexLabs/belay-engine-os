@@ -143,10 +143,21 @@ type Harness string
 const (
 	HarnessClaude Harness = "claude"
 	HarnessCodex  Harness = "codex"
+	HarnessCursor Harness = "cursor"
+	// HarnessAntigravity is Google Antigravity. It is hook-only: Belay records
+	// its sessions through Numbat's live hooks and registers Local MCP and the
+	// managed skill for it, but it has no readable transcript and cannot run
+	// Belay's semantic analysis.
+	HarnessAntigravity Harness = "antigravity"
 )
 
 func (value Harness) Valid() bool {
-	return value == HarnessClaude || value == HarnessCodex
+	switch value {
+	case HarnessClaude, HarnessCodex, HarnessCursor, HarnessAntigravity:
+		return true
+	default:
+		return false
+	}
 }
 
 type SemanticDisposition string

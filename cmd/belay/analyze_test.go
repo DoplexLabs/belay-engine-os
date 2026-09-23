@@ -84,13 +84,31 @@ func TestRunSemanticProjectAnalysesRunsBothBranchesAndAggregatesErrors(
 	}
 }
 
+// writeFakeExecutable places an executable shell stub named name in dir.
+func writeFakeExecutable(t *testing.T, dir, name string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// isolateSemanticHarnessHome points HOME at an empty directory so the
+// Cursor CLI and Antigravity CLI marker directories under it are absent
+// unless a test creates them, regardless of what the developer machine has.
+func isolateSemanticHarnessHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
 func TestSelectSemanticHarnessHonorsDetectionAndPreference(t *testing.T) {
+	isolateSemanticHarnessHome(t)
 	bin := t.TempDir()
 	for _, name := range []string{"claude", "codex"} {
-		path := filepath.Join(bin, name)
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		writeFakeExecutable(t, bin, name)
 	}
 	t.Setenv("PATH", bin)
 	inventory := numbat.Inventory{
@@ -105,6 +123,16 @@ func TestSelectSemanticHarnessHonorsDetectionAndPreference(t *testing.T) {
 				Present:  true,
 				Detected: true,
 			},
+			numbat.AgentCursor: {
+				Agent:    "cursor",
+				Present:  true,
+				Detected: true,
+			},
+			numbat.AgentAntigravity: {
+				Agent:    "Antigravity",
+				Present:  true,
+				Detected: true,
+			},
 		},
 	}
 	harness, err := selectSemanticHarness(inventory, "auto")
@@ -115,8 +143,157 @@ func TestSelectSemanticHarnessHonorsDetectionAndPreference(t *testing.T) {
 	if err != nil || harness != localapp.SemanticHarnessCodex {
 		t.Fatalf("Codex harness/error = %q/%v", harness, err)
 	}
-	if _, err := selectSemanticHarness(inventory, "cursor"); err == nil {
-		t.Fatal("unsupported semantic harness was accepted")
+	harness, err = selectSemanticHarness(inventory, "claude-code")
+	if err != nil || harness != localapp.SemanticHarnessClaude {
+		t.Fatalf("claude-code harness/error = %q/%v", harness, err)
+	}
+	// A detected Cursor or Antigravity IDE row says nothing about the
+	// CLI; without the CLI on PATH an explicit request must name what is
+	// missing, and auto must skip them.
+	_, err = selectSemanticHarness(inventory, "cursor")
+	if err == nil ||
+		!strings.Contains(err.Error(), "Cursor CLI was not detected") {
+		t.Fatalf("cursor rejection = %v, want Cursor CLI not detected", err)
+	}
+	_, err = selectSemanticHarness(inventory, "antigravity")
+	if err == nil ||
+		!strings.Contains(err.Error(), "Antigravity CLI was not detected") {
+		t.Fatalf(
+			"antigravity rejection = %v, want Antigravity CLI not detected",
+			err,
+		)
+	}
+	_, err = selectSemanticHarness(inventory, "windsurf")
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"--agent must be auto, claude, codex, cursor, or antigravity",
+	) {
+		t.Fatalf("unknown harness rejection = %v", err)
+	}
+}
+
+func TestSelectSemanticHarnessAutoReportsNoHarness(t *testing.T) {
+	isolateSemanticHarnessHome(t)
+	t.Setenv("PATH", t.TempDir())
+	inventory := numbat.Inventory{
+		LaunchTargets: map[numbat.Agent]numbat.InventoryRow{
+			numbat.AgentClaude: {Agent: "claude", Present: true, Detected: true},
+			numbat.AgentCodex:  {Agent: "codex", Present: true, Detected: true},
+		},
+	}
+	_, err := selectSemanticHarness(inventory, "auto")
+	if !errors.Is(err, errNoSemanticHarness) {
+		t.Fatalf("auto without harnesses = %v, want errNoSemanticHarness", err)
+	}
+	_, err = selectSemanticHarness(inventory, "claude")
+	if err == nil ||
+		!strings.Contains(err.Error(), "Claude Code was not detected") {
+		t.Fatalf("claude rejection = %v, want Claude Code not detected", err)
+	}
+	// An inventory row alone never selects Claude or Codex: the harness
+	// must also be detected on PATH.
+	if _, err := selectSemanticHarness(inventory, "codex"); err == nil {
+		t.Fatal("Codex selected without a codex executable on PATH")
+	}
+}
+
+func TestSelectSemanticHarnessPicksCursorCLIWithoutInventoryRow(t *testing.T) {
+	home := isolateSemanticHarnessHome(t)
+	bin := t.TempDir()
+	// The Cursor CLI ships as `agent` alongside a real ~/.cursor directory.
+	writeFakeExecutable(t, bin, "agent")
+	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	// No Cursor row at all: the CLI installs independently of the IDE, so
+	// the Numbat inventory must not gate it.
+	inventory := numbat.Inventory{
+		LaunchTargets: map[numbat.Agent]numbat.InventoryRow{
+			numbat.AgentClaude: {Agent: "claude", Present: true, Detected: true},
+			numbat.AgentCodex:  {Agent: "codex", Present: true, Detected: true},
+		},
+	}
+	for _, preferred := range []string{"auto", "cursor", "cursor-agent"} {
+		harness, err := selectSemanticHarness(inventory, preferred)
+		if err != nil || harness != localapp.SemanticHarnessCursor {
+			t.Fatalf(
+				"--agent %s harness/error = %q/%v, want cursor",
+				preferred,
+				harness,
+				err,
+			)
+		}
+	}
+	_, err := selectSemanticHarness(inventory, "antigravity")
+	if err == nil ||
+		!strings.Contains(err.Error(), "Antigravity CLI was not detected") {
+		t.Fatalf("antigravity rejection = %v", err)
+	}
+	// Claude and Codex still outrank the Cursor CLI when detected.
+	writeFakeExecutable(t, bin, "codex")
+	harness, err := selectSemanticHarness(inventory, "auto")
+	if err != nil || harness != localapp.SemanticHarnessCodex {
+		t.Fatalf("auto with codex harness/error = %q/%v", harness, err)
+	}
+}
+
+func TestSelectSemanticHarnessPicksAntigravityCLIWithoutInventoryRow(
+	t *testing.T,
+) {
+	home := isolateSemanticHarnessHome(t)
+	bin := t.TempDir()
+	// The Antigravity CLI is `agy` on PATH (a plain executable, not the
+	// IDE's launcher) alongside a real ~/.gemini/antigravity-cli directory.
+	writeFakeExecutable(t, bin, "agy")
+	if err := os.MkdirAll(
+		filepath.Join(home, ".gemini", "antigravity-cli"),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	inventory := numbat.Inventory{
+		LaunchTargets: map[numbat.Agent]numbat.InventoryRow{
+			numbat.AgentClaude: {Agent: "claude", Present: true, Detected: true},
+			numbat.AgentCodex:  {Agent: "codex", Present: true, Detected: true},
+		},
+	}
+	for _, preferred := range []string{"auto", "antigravity", "agy"} {
+		harness, err := selectSemanticHarness(inventory, preferred)
+		if err != nil || harness != localapp.SemanticHarnessAntigravity {
+			t.Fatalf(
+				"--agent %s harness/error = %q/%v, want antigravity",
+				preferred,
+				harness,
+				err,
+			)
+		}
+	}
+	_, err := selectSemanticHarness(inventory, "cursor")
+	if err == nil ||
+		!strings.Contains(err.Error(), "Cursor CLI was not detected") {
+		t.Fatalf("cursor rejection = %v", err)
+	}
+	// The Cursor CLI outranks the Antigravity CLI under auto.
+	writeFakeExecutable(t, bin, "cursor-agent")
+	harness, err := selectSemanticHarness(inventory, "auto")
+	if err != nil || harness != localapp.SemanticHarnessCursor {
+		t.Fatalf("auto with cursor-agent harness/error = %q/%v", harness, err)
+	}
+}
+
+func TestSemanticHarnessDisplayNames(t *testing.T) {
+	tests := map[localapp.SemanticHarness]string{
+		localapp.SemanticHarnessClaude:      "Claude Code",
+		localapp.SemanticHarnessCodex:       "Codex",
+		localapp.SemanticHarnessCursor:      "Cursor Agent",
+		localapp.SemanticHarnessAntigravity: "Antigravity",
+	}
+	for harness, want := range tests {
+		if got := semanticHarnessDisplayName(harness); got != want {
+			t.Fatalf("display name for %q = %q, want %q", harness, got, want)
+		}
 	}
 }
 

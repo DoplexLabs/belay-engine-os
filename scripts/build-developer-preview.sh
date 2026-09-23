@@ -2,12 +2,12 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-readonly NUMBAT_REPOSITORY="https://github.com/perplexityai/numbat.git"
-readonly NUMBAT_COMMIT="f0778c09dc48281aa93a3887d05096c0a1f3f9f7"
-readonly NUMBAT_VERSION_MARKER="f0778c09dc48"
+readonly NUMBAT_REPOSITORY="https://github.com/DoplexLabs/numbat.git"
+readonly NUMBAT_COMMIT="b5172bb8bb8f1d68edc4f3b9462de7e248dc5243"
+readonly NUMBAT_VERSION_MARKER="b5172bb8bb8f"
 readonly NUMBAT_LICENSE_SHA256="c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
 readonly NUMBAT_THIRD_PARTY_SHA256="c2732acc87437d691ad1c5fc70cd1c6596a8999a1926721a2004f3e7b7692c77"
-readonly DEFAULT_VERSION="0.0.1-alpha.8"
+readonly DEFAULT_VERSION="0.0.1-alpha.11"
 
 usage() {
   cat <<'EOF'
@@ -16,12 +16,19 @@ usage: scripts/build-developer-preview.sh [options]
 Build Belay Local Developer Alpha archives without publishing them.
 
 Options:
-  --arch arm64|amd64|all  Target macOS architecture (default: native)
-  --version VERSION       Artifact version label (default: 0.0.1-alpha.8)
+  --os darwin|windows     Target operating system (default: darwin)
+  --arch arm64|amd64|all  Target architecture (default: native for darwin,
+                          amd64 for windows)
+  --version VERSION       Artifact version label (default: 0.0.1-alpha.11)
   --output-dir PATH       Output directory (default: ./dist)
   --numbat-source PATH    Use an existing pristine Numbat checkout
   --codesign-identity ID  Sign both binaries with an Apple Developer ID
+                          (darwin only)
   -h, --help              Show this help
+
+macOS archives are tar.gz files and must be built on macOS. Windows archives
+are zip files, are never signed by this script, and may be cross-compiled from
+macOS or Linux. Windows packages are an engineering preview, not a release.
 
 The build fails if the Belay tree is dirty unless BELAY_ALLOW_DIRTY=1 is set.
 The Numbat checkout must always be clean and exactly at the approved commit.
@@ -39,6 +46,7 @@ require_command() {
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd -- "${script_dir}/.." && pwd -P)"
+target_os="darwin"
 target_arch="native"
 preview_version="${BELAY_PREVIEW_VERSION:-${DEFAULT_VERSION}}"
 output_dir="${repository_root}/dist"
@@ -47,6 +55,11 @@ codesign_identity=""
 
 while (($# > 0)); do
   case "$1" in
+    --os)
+      (($# >= 2)) || die "--os requires a value"
+      target_os="$2"
+      shift 2
+      ;;
     --arch)
       (($# >= 2)) || die "--arch requires a value"
       target_arch="$2"
@@ -82,7 +95,25 @@ while (($# > 0)); do
   esac
 done
 
-[[ "$(uname -s)" == "Darwin" ]] || die "developer-preview packaging is supported only on macOS"
+case "${target_os}" in
+  darwin)
+    [[ "$(uname -s)" == "Darwin" ]] ||
+      die "macOS developer-preview packaging is supported only on macOS"
+    executable_suffix=""
+    archive_format="tar.gz"
+    ;;
+  windows)
+    [[ "$(uname -s)" == "Darwin" || "$(uname -s)" == "Linux" ]] ||
+      die "Windows developer-preview packaging is supported only from macOS or Linux"
+    [[ -z "${codesign_identity}" ]] ||
+      die "--codesign-identity applies only to darwin targets"
+    executable_suffix=".exe"
+    archive_format="zip"
+    ;;
+  *)
+    die "--os must be darwin or windows"
+    ;;
+esac
 [[ "${preview_version}" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]] ||
   die "version may contain only letters, numbers, dots, underscores, and hyphens"
 
@@ -107,11 +138,15 @@ fi
 
 case "${target_arch}" in
   native)
-    case "$(uname -m)" in
-      arm64) architectures=("arm64") ;;
-      x86_64) architectures=("amd64") ;;
-      *) die "unsupported native architecture: $(uname -m)" ;;
-    esac
+    if [[ "${target_os}" == "windows" ]]; then
+      architectures=("amd64")
+    else
+      case "$(uname -m)" in
+        arm64) architectures=("arm64") ;;
+        x86_64) architectures=("amd64") ;;
+        *) die "unsupported native architecture: $(uname -m)" ;;
+      esac
+    fi
     ;;
   arm64|amd64)
     architectures=("${target_arch}")
@@ -164,7 +199,9 @@ mkdir -p -- "${output_dir}"
 output_dir="$(cd -- "${output_dir}" && pwd -P)"
 
 for architecture in "${architectures[@]}"; do
-  package_name="belay-local-developer-alpha-v${preview_version}-darwin-${architecture}"
+  package_name="belay-local-developer-alpha-v${preview_version}-${target_os}-${architecture}"
+  numbat_binary="${package_name}/bin/numbat${executable_suffix}"
+  belay_binary="${package_name}/bin/belay${executable_suffix}"
   package_root="${preview_tmp}/${package_name}"
   mkdir -p -- "${package_root}/bin" "${package_root}/licenses/numbat" "${package_root}/docs"
 
@@ -173,7 +210,7 @@ for architecture in "${architectures[@]}"; do
   env \
     CGO_ENABLED=0 \
     GOFLAGS= \
-    GOOS=darwin \
+    GOOS="${target_os}" \
     GOARCH="${architecture}" \
     GIT_CONFIG_COUNT=1 \
     GIT_CONFIG_KEY_0="url.https://github.com/cel-expr/cel-go.insteadOf" \
@@ -183,7 +220,7 @@ for architecture in "${architectures[@]}"; do
     go -C "${numbat_source}" build \
       -trimpath \
       -ldflags="-s -w" \
-      -o "${package_root}/bin/numbat" \
+      -o "${preview_tmp}/${numbat_binary}" \
       ./cmd/numbat
 
   signed="false"
@@ -193,13 +230,13 @@ for architecture in "${architectures[@]}"; do
       --options runtime \
       --timestamp \
       --sign "${codesign_identity}" \
-      "${package_root}/bin/numbat"
-    codesign --verify --strict --verbose=2 "${package_root}/bin/numbat"
+      "${preview_tmp}/${numbat_binary}"
+    codesign --verify --strict --verbose=2 "${preview_tmp}/${numbat_binary}"
     signed="true"
   fi
 
   numbat_binary_sha256="$(
-    shasum -a 256 "${package_root}/bin/numbat" | awk '{print $1}'
+    shasum -a 256 "${preview_tmp}/${numbat_binary}" | awk '{print $1}'
   )"
   [[ "${numbat_binary_sha256}" =~ ^[0-9a-f]{64}$ ]] ||
     die "built Numbat checksum is not a lowercase SHA-256"
@@ -207,13 +244,13 @@ for architecture in "${architectures[@]}"; do
   env \
     CGO_ENABLED=0 \
     GOFLAGS= \
-    GOOS=darwin \
+    GOOS="${target_os}" \
     GOARCH="${architecture}" \
     go -C "${repository_root}" build \
       -buildvcs=false \
       -trimpath \
       -ldflags="-s -w -X main.buildVersion=${preview_version} -X main.buildCommit=${belay_commit} -X main.bundledNumbatSHA256=${numbat_binary_sha256} -X main.bundledNumbatVersionMarker=${NUMBAT_VERSION_MARKER}" \
-      -o "${package_root}/bin/belay" \
+      -o "${preview_tmp}/${belay_binary}" \
       ./cmd/belay
 
   if [[ -n "${codesign_identity}" ]]; then
@@ -222,8 +259,8 @@ for architecture in "${architectures[@]}"; do
       --options runtime \
       --timestamp \
       --sign "${codesign_identity}" \
-      "${package_root}/bin/belay"
-    codesign --verify --strict --verbose=2 "${package_root}/bin/belay"
+      "${preview_tmp}/${belay_binary}"
+    codesign --verify --strict --verbose=2 "${preview_tmp}/${belay_binary}"
   fi
 
   install -m 0644 "${repository_root}/LICENSE" "${package_root}/LICENSE"
@@ -239,11 +276,16 @@ for architecture in "${architectures[@]}"; do
   install -m 0644 \
     "${repository_root}/docs/launch/clean-machine-alpha-qa.md" \
     "${package_root}/docs/clean-machine-alpha-qa.md"
+  if [[ "${target_os}" == "windows" ]]; then
+    install -m 0644 \
+      "${repository_root}/docs/launch/windows-port.md" \
+      "${package_root}/docs/windows-port.md"
+  fi
 
   cat > "${package_root}/BUILD-INFO.txt" <<EOF
 Belay Local Developer Alpha
 version=${preview_version}
-target=darwin/${architecture}
+target=${target_os}/${architecture}
 belay_commit=${belay_commit}
 belay_dirty=${belay_dirty}
 numbat_commit=${NUMBAT_COMMIT}
@@ -263,11 +305,12 @@ EOF
       done > SHA256SUMS
   )
 
-  archive="${output_dir}/${package_name}.tar.gz"
+  archive="${output_dir}/${package_name}.${archive_format}"
   go run "${repository_root}/scripts/package-preview.go" \
     -source "${package_root}" \
     -output "${archive}" \
-    -epoch "${source_date_epoch}"
+    -epoch "${source_date_epoch}" \
+    -format "${archive_format}"
   (
     cd -- "${output_dir}"
     shasum -a 256 "$(basename -- "${archive}")" > "$(basename -- "${archive}").sha256"

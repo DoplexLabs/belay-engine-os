@@ -39,6 +39,7 @@ type PruneResult struct {
 	PrunedEventCount             int                  `json:"pruned_event_count"`
 	PrunedFindingCount           int                  `json:"pruned_finding_count"`
 	PrunedTranscriptTurnCount    int                  `json:"pruned_transcript_turn_count"`
+	PrunedEvidenceEpisodeCount   int                  `json:"pruned_evidence_episode_count"`
 	PrunedPayloadBytes           int64                `json:"pruned_payload_bytes"`
 	PrunedTranscriptPayloadBytes int64                `json:"pruned_transcript_payload_bytes"`
 	AfterEventCount              int                  `json:"after_event_count"`
@@ -232,6 +233,31 @@ func (s *Store) Prune(
 					return errors.New("resolve retained transcript project")
 				}
 				transcriptProjects[projectIdentity] = struct{}{}
+				var episodeCount int
+				var episodeBytes int64
+				if err := tx.QueryRowContext(ctx, `
+					SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0)
+					FROM evidence_episodes
+					WHERE session_key = ?`,
+					sessionKey,
+				).Scan(&episodeCount, &episodeBytes); err != nil {
+					return errors.New(
+						"inspect retained evidence episodes",
+					)
+				}
+				if episodeCount > 0 {
+					if _, err := tx.ExecContext(ctx, `
+						DELETE FROM evidence_episodes
+						WHERE session_key = ?`,
+						sessionKey,
+					); err != nil {
+						return errors.New(
+							"delete invalidated evidence episodes",
+						)
+					}
+					result.PrunedEvidenceEpisodeCount += episodeCount
+					result.PrunedPayloadBytes += episodeBytes
+				}
 			}
 			if err := withMutationTx(
 				ctx,
@@ -334,6 +360,43 @@ func (s *Store) Prune(
 				WHERE events.session_key = analysis_diagnostics.session_key
 			)`); err != nil {
 			return errors.New("delete orphaned analysis diagnostics")
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM session_identity_observations
+			WHERE (
+				source_kind = 'transcript'
+				AND NOT EXISTS (
+					SELECT 1
+					FROM transcript_sessions
+					WHERE transcript_sessions.session_key =
+						session_identity_observations.source_session_key
+				)
+			) OR (
+				source_kind <> 'transcript'
+				AND NOT EXISTS (
+					SELECT 1
+					FROM events
+					WHERE events.session_key =
+						session_identity_observations.source_session_key
+				)
+			)`); err != nil {
+			return errors.New("delete orphaned session identity observations")
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM session_identity_links
+			WHERE NOT EXISTS (
+				SELECT 1
+				FROM session_identity_observations
+				WHERE source_session_key =
+					session_identity_links.left_session_key
+			)
+				OR NOT EXISTS (
+					SELECT 1
+					FROM session_identity_observations
+					WHERE source_session_key =
+						session_identity_links.right_session_key
+				)`); err != nil {
+			return errors.New("delete orphaned session identity links")
 		}
 		removedJobs, err := tx.ExecContext(ctx, `
 			DELETE FROM fix_recurrence_jobs

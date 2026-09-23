@@ -73,18 +73,7 @@ func (c *Client) command(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 func allowedEnvironment() []string {
-	names := []string{
-		"HOME",
-		"USER",
-		"TMPDIR",
-		"PATH",
-		"LANG",
-		"LC_ALL",
-		"CODEX_HOME",
-		"CLAUDE_CONFIG_DIR",
-		"XDG_CONFIG_HOME",
-		"XDG_DATA_HOME",
-	}
+	names := HostEnvironmentNames()
 	result := make([]string, 0, len(names))
 	for _, name := range names {
 		if value, ok := os.LookupEnv(name); ok {

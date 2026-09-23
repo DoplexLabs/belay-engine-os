@@ -12,19 +12,29 @@ reach SQLite.
 - Authenticated context binds every payload to the envelope version, persisted
   random store ID, record type, record ID, and column name. Copying ciphertext
   between rows, columns, or databases fails authentication.
-- A random 32-byte data key is stored in macOS Keychain under service
-  `dev.doplex.belay.local.data-key.v1` and the database's random store ID.
-  Hardware names, usernames, and Teams identities are not used.
+- A random 32-byte data key is created per store. On macOS it is stored in
+  macOS Keychain under service `dev.doplex.belay.local.data-key.v1` and the
+  database's random store ID. Hardware names, usernames, and Teams identities
+  are not used.
 - The persisted store ID moves with the database. An encrypted database with a
   missing or wrong key fails closed; Belay never creates a replacement key or
   opens encrypted rows as plaintext.
-- Keychain command failures return payload-free errors. The key is provided to
+- On macOS, Keychain command failures return payload-free errors. The key is provided to
   `/usr/bin/security -q -i` as part of one complete command on standard input,
   not in process arguments. Command-input mode is noninteractive and must never
   prompt the user for password data. Each invocation has a five-second timeout.
-- Direct `/usr/bin/security` invocation is an M0 packaging mechanism. Before a
-  signed Local application ships, key access must move to signed-app Keychain
-  ACL integration and be verified against notarized release artifacts.
+- On macOS, direct `/usr/bin/security` invocation is an M0 packaging mechanism.
+  Before a signed Local application ships, key access must move to signed-app
+  Keychain ACL integration and be verified against notarized release artifacts.
+- On Windows the same random key is wrapped with the Data Protection API
+  (DPAPI: `CryptProtectData`, user scope, UI forbidden, entropy bound to the
+  store ID) and stored as `keys/<store-id>.key` beside the database. Only the
+  creating Windows account can unwrap it. Missing or foreign key files fail
+  closed exactly like a missing Keychain item. A key file copied to another
+  store or another account does not unwrap. See
+  `docs/launch/windows-port.md`.
+- On any other platform Belay has no data-key store and refuses to open an
+  encrypted Local database.
 
 ## Plaintext M0 upgrade
 

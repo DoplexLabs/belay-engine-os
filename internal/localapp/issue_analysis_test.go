@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DoplexLabs/belay-engine/internal/evidenceepisode"
 	"github.com/DoplexLabs/belay-engine/internal/issueintel"
 	"github.com/DoplexLabs/belay-engine/internal/storage/local"
+	"github.com/DoplexLabs/belay-engine/internal/trajectory"
 	"github.com/DoplexLabs/belay-engine/internal/transcript"
 )
 
@@ -59,6 +61,27 @@ func (s *transcriptIssueAnalysisTestStore) ReplaceProjectIssueAnalysis(
 		analysis:   analysis,
 	})
 	return nil
+}
+
+func (s *transcriptIssueAnalysisTestStore) QueryTrajectoryEdges(
+	_ context.Context,
+	_ local.TrajectoryEdgeQuery,
+) ([]trajectory.Edge, error) {
+	return nil, nil
+}
+
+func (s *transcriptIssueAnalysisTestStore) QueryOutcomes(
+	_ context.Context,
+	_ local.OutcomeQuery,
+) ([]trajectory.Outcome, error) {
+	return nil, nil
+}
+
+func (s *transcriptIssueAnalysisTestStore) InsertEvidenceEpisode(
+	_ context.Context,
+	_ evidenceepisode.Episode,
+) (bool, error) {
+	return true, nil
 }
 
 func TestAnalyzeTranscriptIssuesOnceLoadsProjectConfigAndPersistsGeneration(

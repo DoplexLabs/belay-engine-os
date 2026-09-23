@@ -1,7 +1,7 @@
 # Belay Local Developer Alpha clean-machine QA
 
 This checklist is the manual release gate for
-`belay-local-developer-alpha-v0.0.1-alpha.8-darwin-arm64`.
+`belay-local-developer-alpha-v0.0.1-alpha.11-darwin-arm64`.
 
 Complete it on a fresh Apple Silicon macOS account with working Codex and Claude
 Code installations and representative local history. Do not use a founder's
@@ -31,6 +31,10 @@ SHA-256. If the required dataset is unavailable, mark the affected gate
 | Mac model and architecture | |
 | Codex version | |
 | Claude Code version | |
+| Cursor version | |
+| Antigravity version | |
+| Cursor CLI (`agent` or `cursor-agent`) version and sign-in method | |
+| Antigravity CLI (`agy`) version | |
 | Archive filename | |
 | Archive SHA-256 | |
 | Belay commit from `BUILD-INFO.txt` | |
@@ -65,7 +69,7 @@ Pass criteria:
 - Both harnesses have history.
 - `belay_dirty=false`.
 - Numbat commit is
-  `f0778c09dc48281aa93a3887d05096c0a1f3f9f7`.
+  `b5172bb8bb8f1d68edc4f3b9462de7e248dc5243`.
 - `signed=false` and `notarized=false` are understood by the tester.
 
 Evidence:
@@ -82,7 +86,7 @@ Run from the download directory:
 
 ```bash
 shasum -a 256 -c \
-  belay-local-developer-alpha-v0.0.1-alpha.8-darwin-arm64.tar.gz.sha256
+  belay-local-developer-alpha-v0.0.1-alpha.11-darwin-arm64.tar.gz.sha256
 ```
 
 Pass criteria: exit status `0` and the exact archive reports `OK`.
@@ -110,7 +114,7 @@ Procedure:
 Pass criteria:
 
 - Both `bin/belay` and `bin/numbat` run after any required per-binary approval.
-- Numbat reports version marker `f0778c09dc48`.
+- Numbat reports version marker `b5172bb8bb8f`.
 - No system-wide security setting is disabled.
 
 Evidence:
@@ -131,11 +135,11 @@ From the extracted archive, start Belay with the packaged one-command path:
 ./bin/belay quickstart --allow-codex-mcp-add
 ```
 
-This invocation is explicit consent to install reversible monitor-only hooks
-and the governed Belay MCP server in detected Codex and Claude Code
-user configuration, scan supported history, start Local, print its URL, and
-attempt to open the dashboard. The flag permits Codex `mcp add` only after
-Belay strictly verifies that the `belay` entry is absent and records explicit
+This invocation is explicit consent to install reversible monitor-only hooks,
+the managed `/belay` skill, and the governed Belay MCP server in detected
+Codex, Claude Code, Cursor, and Antigravity user configuration, scan supported
+history, start Local, print its URL, and attempt to open the dashboard. The
+flag permits Codex `mcp add` only after Belay strictly verifies that the `belay` entry is absent and records explicit
 acceptance of the Codex CLI's non-atomic duplicate-name behavior. Run from an
 extracted path containing a space so the executable remains one command
 argument.
@@ -149,14 +153,39 @@ Pass criteria:
 - `${BELAY_HOME:-~/.belay}/belay.sqlite` is created.
 - Keychain Access shows a generic-password entry with service
   `dev.doplex.belay.local.data-key.v1`.
-- `./bin/belay hooks status` reports the detected Codex and Claude Code
-  monitor-only hooks installed or reports an objective per-harness reason that
-  a hook was not applicable.
+- `./bin/belay hooks status` reports the detected Codex, Claude Code, Cursor,
+  and Antigravity monitor-only hooks installed or reports an objective
+  per-harness reason that a hook was not applicable. The Cursor entries are in
+  `~/.cursor/hooks.json`; the Antigravity entries are under the key `numbat`
+  in `~/.gemini/config/hooks.json`.
 - `./bin/belay mcp-config status` returns schema
-  `belay.mcp-config.v1`, target order Codex then Claude, and reports each
-  available detected target as `owned_current`.
+  `belay.mcp-config.v1`, target order Codex, Claude, Cursor, then Antigravity,
+  and reports each available detected target as `owned_current`.
 - Codex add is never invoked while an entry named `belay` is present. Foreign
   or unverifiable Codex entries are preserved and never overwritten or removed.
+- The Cursor registration is a direct write of `~/.cursor/mcp.json` with no
+  opt-in flag: `mcpServers.belay` names the packaged `bin/belay` with
+  `["mcp"]`, and every other server and top-level key in the file is
+  unchanged, byte for byte. Seed the file beforehand with an unrelated server and an
+  unknown top-level key and confirm both survive.
+- With a foreign entry named `belay` seeded in `~/.cursor/mcp.json`, install
+  preserves it untouched and reports it rather than overwriting it.
+- The Antigravity registration is a direct write of
+  `~/.gemini/config/mcp_config.json` with no opt-in flag: `mcpServers.belay`
+  names the packaged `bin/belay` with `["mcp"]`, and every other server and
+  top-level key in the file is unchanged, byte for byte. Seed the file
+  beforehand with an unrelated server, a `serverUrl` remote entry, and an
+  unknown top-level key and confirm all three survive. When `~/.gemini/config`
+  did not exist, Belay created it. The legacy
+  `~/.gemini/antigravity/mcp_config.json` is untouched.
+- With a foreign entry named `belay` seeded in
+  `~/.gemini/config/mcp_config.json`, install preserves it untouched and
+  reports it rather than overwriting it.
+- The managed `/belay` skill is installed for each detected harness, including
+  `~/.cursor/skills/belay/SKILL.md` and
+  `~/.gemini/config/skills/belay/SKILL.md`, and the quickstart stderr skill
+  line reports one `agent=status` pair per supported harness
+  (`skill codex=... claude=... cursor=... antigravity=...`).
 - Quickstart stdout contains only the one-line tokenized Local URL. Fixed hook
   and MCP summaries appear on stderr without executable paths or raw agent-CLI
   output.
@@ -171,7 +200,15 @@ Evidence:
 - Redacted `${BELAY_HOME:-~/.belay}/config.json`:
 - Redacted `doctor` output:
 - Hook status:
+- Cursor `~/.cursor/hooks.json` before/after:
+- Antigravity `~/.gemini/config/hooks.json` before/after:
 - MCP configuration status:
+- Cursor `~/.cursor/mcp.json` before/after, including the seeded foreign entry:
+- Antigravity `~/.gemini/config/mcp_config.json` before/after, including the
+  seeded foreign entry, and the untouched legacy
+  `~/.gemini/antigravity/mcp_config.json` if present:
+- Skill install status, including `~/.cursor/skills/belay/SKILL.md` and
+  `~/.gemini/config/skills/belay/SKILL.md`:
 - Redacted quickstart stdout/stderr:
 - Keychain service/account screenshot:
 - Notes/defect:
@@ -189,6 +226,14 @@ Pass criteria:
   manually.
 - First useful history appears within 15 minutes.
 - At least one Codex and one Claude Code session appears.
+- When Cursor is installed, at least one Cursor session appears from the
+  historical scan of `~/.cursor/projects/<hash>/agent-transcripts/**/*.jsonl`.
+  Belay's Cursor transcript reader has only synthetic fixtures behind it, so
+  record whether real Cursor history parsed and attach a redacted count.
+- When Antigravity is installed, no Antigravity session appears from the
+  historical scan, because Antigravity is hook-only and `belay scan` performs
+  no Antigravity scan. Confirm the scan reports no Antigravity history rather
+  than an error; the first Antigravity session is expected only in A09b.
 - Historical sessions are visibly marked.
 - Timeline rows show immutable event IDs and source/coverage metadata.
 
@@ -201,6 +246,8 @@ Evidence:
 - Browser-open result and printed-URL fallback:
 - Codex session screenshot:
 - Claude Code session screenshot:
+- Cursor session screenshot and parsed-history observation:
+- Antigravity scan observation (no historical session, no error):
 - Notes/defect:
 
 ## A06 — Duplicate replay
@@ -738,6 +785,180 @@ Evidence:
 - Timeline event ID/screenshot:
 - Notes/defect:
 
+## A09a — Explicit live hooks and skill: Cursor
+
+The A04 `quickstart` command was the explicit hook-install consent for Cursor
+too. Confirm its result without reinstalling, then perform one harmless,
+uniquely identifiable action in Cursor Agent chat in a disposable test
+directory.
+
+Pass criteria:
+
+- Cursor hook status reports installed and configured, and
+  `~/.cursor/hooks.json` contains only Belay's monitor-only entries beside
+  whatever was already there.
+- The Cursor action completes normally.
+- A corresponding new minimized event appears within 10 seconds while Belay is
+  running, from the `live/cursor.ndjson` spool.
+- `/belay start` in Cursor Agent chat returns a Mission Pack whose targets are
+  Cursor-compatible (`AGENTS.md`, never `.claude/settings.json`).
+- `./bin/belay hooks uninstall` followed by `./bin/belay hooks status` removes
+  and then reports absent the Cursor hooks, leaving unrelated entries in
+  `~/.cursor/hooks.json` in place. Reinstall with `./bin/belay hooks install`
+  before continuing.
+
+Evidence:
+
+- Result:
+- Started/finished:
+- Hook status:
+- `~/.cursor/hooks.json` contents before/after:
+- Safe action description:
+- Timeline event ID/screenshot:
+- `/belay start` output in Cursor:
+- Uninstall/reinstall output:
+- Notes/defect:
+
+## A09b — Explicit live hooks and skill: Antigravity
+
+The A04 `quickstart` command was the explicit hook-install consent for
+Antigravity too. Confirm its result without reinstalling, then perform one
+harmless, uniquely identifiable action in Antigravity's agent chat in a
+disposable test directory. Record the Antigravity version; Belay's Antigravity
+support was developed against Antigravity 2.0.1 without a captured live
+session.
+
+Pass criteria:
+
+- Antigravity hook status reports installed and configured, and
+  `~/.gemini/config/hooks.json` contains only Belay's monitor-only entries
+  (`PreToolUse`, `PostToolUse`, and `Stop`) under the key `numbat` beside
+  whatever was already there.
+- The Antigravity action completes normally.
+- A corresponding new minimized event appears within 10 seconds while Belay is
+  running, from the `live/antigravity.ndjson` spool.
+- The resulting Antigravity session shows timeline evidence and any
+  deterministic hook-based issue, and shows no transcript excerpt, Habits
+  debrief, or transcript-derived lesson; Belay has no Antigravity transcript
+  reader. Record that the encrypted `.pb` files under
+  `~/.gemini/antigravity/conversations/` were not read.
+- `/belay start` in Antigravity's agent chat returns a Mission Pack whose
+  targets are Antigravity-compatible (`.agents/rules/belay.md`, never
+  `AGENTS.md`, `CLAUDE.md`, or `.claude/settings.json`).
+- `./bin/belay hooks uninstall` followed by `./bin/belay hooks status` removes
+  and then reports absent the Antigravity hooks, leaving unrelated entries in
+  `~/.gemini/config/hooks.json` in place. Reinstall with
+  `./bin/belay hooks install` before continuing.
+
+Evidence:
+
+- Result:
+- Started/finished:
+- Antigravity version:
+- Hook status:
+- `~/.gemini/config/hooks.json` contents before/after:
+- Safe action description:
+- Timeline event ID/screenshot:
+- Session view showing no transcript excerpt or debrief:
+- `/belay start` output in Antigravity:
+- Uninstall/reinstall output:
+- Notes/defect:
+
+## A09c — Semantic analysis via the Cursor CLI and the Antigravity CLI
+
+Belay's semantic analysis (deterministic-issue refinement, lessons, and Habits
+debriefs) can run through the Cursor CLI and the Antigravity CLI as well as
+Claude Code and Codex. Both paths were written from the vendors' published
+documentation: neither CLI was installed on the development machine, so this
+gate is the first real run of either. If a CLI cannot be installed or signed
+in on the QA account, mark the affected half `BLOCKED`; do not substitute the
+IDE for the CLI.
+
+Precondition: A05 has already produced Claude Code, Codex, and Cursor sessions,
+so there is something to analyze. Record every CLI version in the test record.
+
+Procedure, Cursor CLI:
+
+1. Install the Cursor CLI with `curl https://cursor.com/install -fsS | bash`
+   (it lands in `~/.local/bin`), sign in with `agent login` (or export
+   `CURSOR_API_KEY` in the test shell), and record which binary name is
+   present (`agent`, `cursor-agent`, or both) and whether `~/.cursor` is a
+   real directory.
+2. Run `./bin/belay analyze --agent cursor` and preserve stdout/stderr.
+3. Open a Claude Code, Codex, or Cursor session in Local and look for a new
+   semantic lesson or Habits debrief.
+4. Rename or remove `~/.cursor` temporarily (keep a copy), run
+   `./bin/belay analyze --agent cursor` again, then restore `~/.cursor`.
+
+Procedure, Antigravity CLI:
+
+5. Install the Antigravity CLI with
+   `curl -fsSL https://antigravity.google/cli/install.sh | bash` (it lands in
+   `~/.local/bin/agy`) and complete its own sign-in. Record `which -a agy` so
+   the CLI and the IDE's launcher can be told apart, and record whether
+   `~/.gemini/antigravity-cli` is a real directory.
+6. Run `./bin/belay analyze --agent antigravity` and preserve stdout/stderr.
+   While it runs, capture the `agy` command line (for example with `ps`).
+7. Open a Claude Code, Codex, or Cursor session in Local and look for a new
+   semantic lesson or Habits debrief; then open the A09b Antigravity session.
+8. Run `/belay start` in Antigravity's agent chat, in Claude Code, in Codex,
+   and in Cursor after the Antigravity-run analysis.
+9. Run `./bin/belay analyze --agent auto` and record which CLI it selected.
+
+Pass criteria:
+
+- Step 2 completes without error using only the tester's own Cursor sign-in.
+  Belay passes no API key and makes no model call of its own; a network
+  observation of Belay Local itself shows no product-network request.
+- After step 2, at least one Claude Code, Codex, or Cursor session shows a
+  semantic lesson or Habits debrief, and the recorded model for that analysis
+  is unknown (the Cursor JSON result carries none).
+- In step 4, with `~/.cursor` absent, a bare `agent` on `PATH` is not detected
+  and Belay reports the Cursor CLI unavailable rather than running a generic
+  `agent` binary; with `cursor-agent` on `PATH` it is still detected.
+- Step 6 completes without error. The captured `agy` command line contains
+  `--sandbox` and `--json-schema` and does not contain
+  `--dangerously-skip-permissions`; it is the `~/.local/bin/agy` CLI, not
+  the IDE launcher, and Belay never reads `~/.gemini/antigravity-cli`.
+- After step 6, at least one Claude Code, Codex, or Cursor session shows a
+  semantic lesson or Habits debrief written by the Antigravity CLI, and the
+  A09b Antigravity session still shows no transcript excerpt or Habits
+  debrief; the Antigravity CLI changes which CLI performs the analysis, not
+  which sessions have transcripts.
+- In step 8, guidance from the Antigravity-run analysis targets
+  `.agents/rules/belay.md` in Antigravity, `CLAUDE.md` in Claude Code, and
+  `AGENTS.md` in Codex and Cursor. Guidance from the Cursor-run analysis
+  targets `AGENTS.md` in Cursor.
+- Step 9 selects Claude Code while it is installed; the documented order is
+  Claude Code, then Codex, then the Cursor CLI, then the Antigravity CLI.
+  Record the actual selection.
+- A result that fails Belay's output-schema validation, if one occurs, is
+  reported as rejected and produces no lesson or debrief. Record any such
+  rejection verbatim (redacted); do not treat it as a pass or a fail by
+  itself.
+- The Cursor and Antigravity review queues (`list_experience_proposals` with
+  `harness: cursor` and `harness: antigravity`) still show proposals from
+  every engine, one per candidate.
+
+Evidence:
+
+- Result:
+- Started/finished:
+- Cursor CLI binary name(s), version, sign-in method, and `~/.cursor` state:
+- `analyze --agent cursor` output (redacted):
+- Lesson or debrief screenshot after the Cursor-run analysis, with model:
+- `~/.cursor`-absent detection output:
+- `which -a agy` output, Antigravity CLI version, and
+  `~/.gemini/antigravity-cli` state:
+- Captured `agy` command line:
+- `analyze --agent antigravity` output (redacted):
+- Lesson or debrief screenshot after the Antigravity-run analysis:
+- A09b Antigravity session view showing no transcript excerpt or debrief:
+- `/belay start` target evidence in each client:
+- `analyze --agent auto` selection:
+- Any schema-validation rejection (redacted):
+- Notes/defect:
+
 ## A10 — MCP issue-intelligence and Mission Pack contract
 
 Use the registrations created by A04. Do not manually edit Codex or Claude
@@ -1040,10 +1261,14 @@ then run the lower-side-effect path and stop it after the URL is printed:
 
 Pass criteria:
 
-- Both monitor hooks are removed or reported absent.
+- Every installed monitor hook, including Cursor's and Antigravity's, is
+  removed or reported absent.
 - Exact current or previously verified Belay MCP entries are removed and status
-  reports them absent. Foreign or unverifiable entries are preserved and make
-  explicit uninstall nonzero.
+  reports them absent, including `mcpServers.belay` in `~/.cursor/mcp.json`
+  and in `~/.gemini/config/mcp_config.json`; the rest of each file, including
+  the seeded unrelated server, remote entry, and unknown key, is unchanged and
+  `mcpServers` remains present. Foreign or unverifiable entries are preserved
+  and make explicit uninstall nonzero.
 - MCP uninstall does not remove hooks, Local history, Keychain data, or the
   extracted package; hook uninstall does not remove MCP configuration.
 - Running `local --no-scan` does not reinstall either hook and does not open a
@@ -1061,6 +1286,9 @@ Evidence:
 - Started/finished:
 - Hook uninstall/status:
 - MCP uninstall/status JSON:
+- Cursor `~/.cursor/mcp.json` and `~/.cursor/hooks.json` after uninstall:
+- Antigravity `~/.gemini/config/mcp_config.json` and
+  `~/.gemini/config/hooks.json` after uninstall:
 - Post-uninstall `local` hook status/browser observation:
 - MCP removal evidence:
 - Post-uninstall harness actions:
@@ -1089,6 +1317,9 @@ Evidence:
 | A07i Monitoring catch-up/restart/retention | PASS | | |
 | A08 Codex hooks | PASS | | |
 | A09 Claude hooks | PASS | | |
+| A09a Cursor hooks/skill | PASS | | |
+| A09b Antigravity hooks/skill | PASS | | |
+| A09c Cursor CLI / Antigravity CLI semantic analysis | PASS | | |
 | A10 MCP | PASS | | |
 | A11 Offline | PASS | | |
 | A12 Privacy | PASS | | |

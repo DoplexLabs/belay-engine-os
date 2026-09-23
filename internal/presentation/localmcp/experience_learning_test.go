@@ -781,7 +781,7 @@ func TestExperienceLearningStrictSchemasAndErrorsFailClosed(t *testing.T) {
 	}), strictInvalidInput)
 	assertStrictToolError(t, callTool(t, session, "list_experience_proposals", map[string]any{
 		"cwd":     "/tmp/project",
-		"harness": "cursor",
+		"harness": "windsurf",
 	}), strictInvalidInput)
 	assertStrictToolError(t, callTool(t, session, "list_experience_proposals", map[string]any{
 		"cwd":     "/tmp/project",

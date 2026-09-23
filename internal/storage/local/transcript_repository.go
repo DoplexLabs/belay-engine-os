@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DoplexLabs/belay-engine/internal/pricing"
+	"github.com/DoplexLabs/belay-engine/internal/sessionidentity"
 	"github.com/DoplexLabs/belay-engine/internal/transcript"
 )
 
@@ -198,6 +199,23 @@ func (s *Store) AppendTranscriptBatch(
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, errors.New("commit transcript batch persistence")
+	}
+	if err := s.UpsertSessionIdentityObservation(
+		ctx,
+		sessionidentity.Observation{
+			SourceKind:       sessionidentity.SourceTranscript,
+			SourceAgent:      session.Agent,
+			SourceSessionKey: session.SessionKey,
+			NativeNamespace:  session.Agent + "_transcript",
+			NativeSessionID:  session.NativeSessionID,
+			ProjectIdentity:  session.ProjectIdentity,
+			StartedAt:        session.StartedAt,
+			EndedAt:          session.EndedAt,
+			Coverage:         string(session.Coverage),
+			ObservedAt:       s.nowUTC(),
+		},
+	); err != nil {
+		return inserted, err
 	}
 	return inserted, nil
 }

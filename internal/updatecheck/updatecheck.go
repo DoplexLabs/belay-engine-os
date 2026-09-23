@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -397,7 +398,7 @@ func readLatestRelease(reader io.Reader) (latestRelease, error) {
 	var latest latestRelease
 	for _, candidate := range releases {
 		version := normalizeVersion(candidate.TagName)
-		if candidate.Draft || version == "" || !hasMacOSArm64Asset(candidate.Assets) {
+		if candidate.Draft || version == "" || !hasCompatibleReleaseAsset(candidate.Assets) {
 			continue
 		}
 		if latest.version != "" && compareVersions(version, latest.version) <= 0 {
@@ -420,10 +421,25 @@ func readLatestRelease(reader io.Reader) (latestRelease, error) {
 	return latest, nil
 }
 
-func hasMacOSArm64Asset(assets []asset) bool {
+func hasCompatibleReleaseAsset(assets []asset) bool {
+	return hasReleaseAsset(assets, releaseAssetSuffix(runtime.GOOS, runtime.GOARCH))
+}
+
+// releaseAssetSuffix names the published archive for the running platform.
+// Windows builds look for a zip archive of their own architecture. Every other
+// platform keeps checking the Apple Silicon channel, which is the only published
+// macOS archive; Intel macOS and Linux have no release channel of their own.
+func releaseAssetSuffix(goos, goarch string) string {
+	if goos == "windows" {
+		return "-windows-" + goarch + ".zip"
+	}
+	return "-darwin-arm64.tar.gz"
+}
+
+func hasReleaseAsset(assets []asset, suffix string) bool {
 	for _, candidate := range assets {
 		name := strings.ToLower(strings.TrimSpace(candidate.Name))
-		if strings.HasSuffix(name, "-darwin-arm64.tar.gz") {
+		if strings.HasSuffix(name, suffix) {
 			return true
 		}
 	}

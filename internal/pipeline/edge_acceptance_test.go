@@ -15,12 +15,40 @@ import (
 	"time"
 
 	"github.com/DoplexLabs/belay-engine/internal/canonical/model"
+	"github.com/DoplexLabs/belay-engine/internal/canonical/numbatmap"
 	"github.com/DoplexLabs/belay-engine/internal/limits"
 	"github.com/DoplexLabs/belay-engine/internal/pipeline"
 	"github.com/DoplexLabs/belay-engine/internal/storage/local"
 )
 
 var acceptanceClock = time.Date(2026, 9, 8, 20, 0, 0, 0, time.UTC)
+
+func TestImportNumbatSessionLinkCreatesStrictAlias(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openTestStore(t)
+	input := strings.NewReader(
+		`{"schema_version":"0.4.0","record_type":"session_link","run_id":"run-lineage","endpoint":{"os":"darwin","arch":"arm64"},"link_id":"sl-e12b40b1ba4c8c398f955732be9cd2f9","source_agent":"claude-code","left":{"namespace":"hook","session_id":"hook-session"},"right":{"namespace":"artifact","session_id":"artifact-session"},"relationship":"hook_artifact_alias","confidence":"high","source_refs":["hook_payload:artifact_path"]}` + "\n",
+	)
+	report, err := newTestImporter(store).Import(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SessionLinksAccepted != 1 || report.Quarantined != 0 {
+		t.Fatalf("report = %+v", report)
+	}
+	hookKey := numbatmap.SessionKey("claude-code", "hook-session", "")
+	artifactKey := numbatmap.SessionKey("claude-code", "artifact-session", "")
+	aliases, err := store.QueryActiveSessionIdentityAliases(
+		ctx,
+		[]string{hookKey},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aliases[hookKey].LinkedSessionKey != artifactKey {
+		t.Fatalf("aliases = %+v", aliases)
+	}
+}
 
 func TestEdgeAcceptanceRecordFamiliesAndRouting(t *testing.T) {
 	ctx := context.Background()

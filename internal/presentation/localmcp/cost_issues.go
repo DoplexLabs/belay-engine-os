@@ -38,10 +38,11 @@ type getFixStatusInput struct {
 }
 
 type issueExcerptsOutput struct {
-	IssueID  string               `json:"issue_id"`
-	Headline string               `json:"headline"`
-	Project  issueintel.Project   `json:"project"`
-	Excerpts []issueintel.Excerpt `json:"excerpts"`
+	IssueID       string                   `json:"issue_id"`
+	Headline      string                   `json:"headline"`
+	Project       issueintel.Project       `json:"project"`
+	EvidenceBasis issueintel.EvidenceBasis `json:"evidence_basis"`
+	Excerpts      []issueintel.Excerpt     `json:"excerpts"`
 }
 
 func (s *Server) registerCostIssueTools() {
@@ -111,10 +112,11 @@ func (s *Server) getIssueExcerpts(
 		return nil, zero, safeReadError(err)
 	}
 	output := issueExcerptsOutput{
-		IssueID:  response.Data.IssueID,
-		Headline: response.Data.Headline,
-		Project:  response.Data.Project,
-		Excerpts: response.Data.Excerpts,
+		IssueID:       response.Data.IssueID,
+		Headline:      response.Data.Headline,
+		Project:       response.Data.Project,
+		EvidenceBasis: response.Data.EvidenceBasis,
+		Excerpts:      response.Data.Excerpts,
 	}
 	return structuredResult(), wrap(output), nil
 }

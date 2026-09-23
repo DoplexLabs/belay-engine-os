@@ -1,0 +1,10 @@
+{"type":"user","conversationId":"cur-11111111-1111-4111-8111-111111111111","timestamp":"2026-08-01T10:00:00Z","cwd":"/synthetic/cursor-project","content":"inspect token=cursorsupersecret"}
+{"type":"assistant","conversationId":"cur-11111111-1111-4111-8111-111111111111","timestamp":"2026-08-01T10:00:01Z","cwd":"/synthetic/cursor-project","model":"synthetic-cursor-model","content":[{"type":"text","text":"I will run the check."},{"type":"tool_use","name":"Shell","callId":"cursor-call-1","input":{"command":"printf token=cursoranothersecret"}},{"type":"tool_result","callId":"cursor-call-1","exitCode":0,"content":"command output password=cursor-private-result"},{"type":"thinking","thinking":"PRIVATE_CURSOR_REASONING_CANARY"}]}
+{"role":"assistant","conversationId":"cur-11111111-1111-4111-8111-111111111111","createdAt":1785578402000,"message":{"model":"synthetic-cursor-model","content":[{"type":"text","text":"Envelope prose."},{"type":"tool_call","tool":"Read","toolCallId":"cursor-call-2","args":{"path":"/synthetic/cursor-project/README.md"}}]}}
+{"type":"tool","conversationId":"cur-11111111-1111-4111-8111-111111111111","createdAt":1785578403,"toolResult":{"toolCallId":"cursor-call-2","isError":true,"output":[{"type":"text","text":"read failed: api_key=cursor-private-read"}]}}
+{"type":"assistant","conversationId":"cur-11111111-1111-4111-8111-111111111111","timestamp":"2026-08-01T10:00:04Z","text":"Flat text body."}
+{"type":"assistant","conversationId":"cur-11111111-1111-4111-8111-111111111111","timestamp":"2026-08-01T10:00:05Z","toolCall":{"name":"web_fetch","callId":"cursor-call-3","parameters":{"url":"https://example.invalid/synthetic","authorization":"[redacted]"}}}
+{"type":"tool","conversationId":"cur-11111111-1111-4111-8111-111111111111","timestamp":"2026-08-01T10:00:06Z","output":"fetched 2 bytes"}
+{"type":"turn_ended","conversationId":"cur-11111111-1111-4111-8111-111111111111","timestamp":"2026-08-01T10:00:07Z","status":"success"}
+{"type":"system","conversationId":"cur-11111111-1111-4111-8111-111111111111","timestamp":"2026-08-01T10:00:08Z","message":"scalar bookkeeping envelope"}
+{not json}

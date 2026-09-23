@@ -14,14 +14,16 @@ func TestInstallBelaySkillsUsesHarnessConfigRootsAndIsIdempotent(t *testing.T) {
 	codexRoot := filepath.Join(t.TempDir(), "codex")
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
 	t.Setenv("CODEX_HOME", codexRoot)
-	inventory := belaySkillTestInventory(true, true)
+	inventory := belaySkillTestInventory(true, true, false, false)
 	results, err := InstallBelaySkills(inventory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 2 ||
-		results[0].Status != "installed" ||
-		results[1].Status != "installed" {
+	if len(results) != 4 ||
+		results[0].Agent != "codex" || results[0].Status != "installed" ||
+		results[1].Agent != "claude" || results[1].Status != "installed" ||
+		results[2].Agent != "cursor" || results[2].Status != "unavailable" ||
+		results[3].Agent != "antigravity" || results[3].Status != "unavailable" {
 		t.Fatalf("install results = %+v", results)
 	}
 	for _, root := range []string{claudeRoot, codexRoot} {
@@ -123,13 +125,61 @@ func assertBelaySkillInvariants(t *testing.T, body string) {
 func TestInstallBelaySkillsSkipsUndetectedHarnesses(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), "claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "codex"))
-	results, err := InstallBelaySkills(belaySkillTestInventory(false, true))
+	results, err := InstallBelaySkills(belaySkillTestInventory(false, true, false, false))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if results[0].Status != "unavailable" ||
-		results[1].Status != "installed" {
+	if len(results) != 4 ||
+		results[0].Status != "unavailable" ||
+		results[1].Status != "installed" ||
+		results[2].Status != "unavailable" ||
+		results[3].Status != "unavailable" {
 		t.Fatalf("results = %+v", results)
+	}
+}
+
+func TestInstallBelaySkillsInstallsIntoCursorHome(t *testing.T) {
+	home := t.TempDir()
+	redirectHome(t, home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), "claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "codex"))
+	results, err := InstallBelaySkills(belaySkillTestInventory(false, false, true, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 4 ||
+		results[2].Agent != "cursor" ||
+		results[2].Status != "installed" ||
+		!results[2].Changed {
+		t.Fatalf("cursor results = %+v", results)
+	}
+	path := filepath.Join(home, ".cursor", "skills", "belay", "SKILL.md")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != belaySkillBody {
+		t.Fatalf("installed cursor skill at %s differs from embed", path)
+	}
+	results, err = InstallBelaySkills(belaySkillTestInventory(false, false, true, false))
+	if err != nil || results[2].Status != "unchanged" || results[2].Changed {
+		t.Fatalf("idempotent cursor results/error = %+v/%v", results, err)
+	}
+}
+
+// Cursor documents no configuration-root override, so a CURSOR_HOME-style
+// environment variable must not move the install away from the real home.
+func TestCursorSkillRootIgnoresEnvironmentOverrides(t *testing.T) {
+	home := t.TempDir()
+	redirectHome(t, home)
+	t.Setenv("CURSOR_HOME", filepath.Join(t.TempDir(), "elsewhere"))
+	t.Setenv("CURSOR_CONFIG_DIR", filepath.Join(t.TempDir(), "elsewhere"))
+	root, err := skillConfigRoot(numbat.AgentCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != filepath.Join(home, ".cursor") {
+		t.Fatalf("cursor skill root = %q, want %q", root, filepath.Join(home, ".cursor"))
 	}
 }
 
@@ -151,7 +201,7 @@ func TestInstallBelaySkillsDoesNotOverwriteForeignSkillOrFollowSymlink(
 	); err != nil {
 		t.Fatal(err)
 	}
-	results, err := InstallBelaySkills(belaySkillTestInventory(true, false))
+	results, err := InstallBelaySkills(belaySkillTestInventory(true, false, false, false))
 	if err == nil || results[0].Status != "conflict" {
 		t.Fatalf("foreign skill results/error = %+v/%v", results, err)
 	}
@@ -166,14 +216,14 @@ func TestInstallBelaySkillsDoesNotOverwriteForeignSkillOrFollowSymlink(
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_HOME", symlinkRoot)
-	results, err = InstallBelaySkills(belaySkillTestInventory(true, false))
+	results, err = InstallBelaySkills(belaySkillTestInventory(true, false, false, false))
 	if err == nil || results[0].Status != "failed" {
 		t.Fatalf("symlink results/error = %+v/%v", results, err)
 	}
 }
 
 func belaySkillTestInventory(
-	codex, claude bool,
+	codex, claude, cursor, antigravity bool,
 ) numbat.Inventory {
 	inventory := numbat.Inventory{
 		LaunchTargets: make(map[numbat.Agent]numbat.InventoryRow),
@@ -192,5 +242,28 @@ func belaySkillTestInventory(
 			Detected: true,
 		}
 	}
+	if cursor {
+		inventory.LaunchTargets[numbat.AgentCursor] = numbat.InventoryRow{
+			Agent:    "cursor",
+			Present:  true,
+			Detected: true,
+		}
+	}
+	if antigravity {
+		inventory.LaunchTargets[numbat.AgentAntigravity] = numbat.InventoryRow{
+			Agent:    "Antigravity",
+			Present:  true,
+			Detected: true,
+		}
+	}
 	return inventory
+}
+
+// redirectHome points os.UserHomeDir at a private directory. Windows resolves
+// it through USERPROFILE rather than HOME, so both are set.
+func redirectHome(t *testing.T, home string) {
+	t.Helper()
+
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 }

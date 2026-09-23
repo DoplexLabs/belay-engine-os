@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-readonly NUMBAT_VERSION_MARKER="f0778c09dc48"
+readonly NUMBAT_VERSION_MARKER="b5172bb8bb8f"
 
 die() {
   printf 'smoke-developer-preview: %s\n' "$*" >&2

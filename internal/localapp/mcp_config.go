@@ -9,11 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/DoplexLabs/belay-engine/internal/acquisition/numbat"
 )
 
 const (
@@ -97,17 +100,33 @@ type mcpConfigDependencies struct {
 	run      mcpCommandRunner
 	now      func() time.Time
 	lock     func(context.Context, string) (func(), error)
+	home     func() (string, error)
 }
 
 type mcpTargetAdapter struct {
 	agent            string
 	executable       string
 	scope            string
+	detected         bool
 	duplicateAddSafe bool
 	statusArgs       []string
 	addPrefix        []string
 	removeArgs       []string
 	parseStatus      func(mcpCommandResult) mcpInspection
+	// file is nil for CLI-backed targets and set for targets whose registry is
+	// a configuration file Belay reads and rewrites itself.
+	file       *mcpFileAdapter
+	configPath string
+}
+
+// mcpFileAdapter is the file-backed equivalent of the CLI status/add/remove
+// commands. It performs the same three actions and reports the same inspection
+// vocabulary, so every ownership rule above it is shared with the CLI targets.
+type mcpFileAdapter struct {
+	locate  func(home string) (string, bool)
+	inspect func(path string) mcpInspection
+	add     func(path string, identity MCPIdentity) mcpCommandResult
+	remove  func(path string, allowed []MCPIdentity) mcpCommandResult
 }
 
 var defaultMCPConfigDependencies = mcpConfigDependencies{
@@ -115,6 +134,7 @@ var defaultMCPConfigDependencies = mcpConfigDependencies{
 	run:      runMCPCommand,
 	now:      func() time.Time { return time.Now().UTC() },
 	lock:     acquireMCPConfigLock,
+	home:     os.UserHomeDir,
 }
 
 func ManageMCPConfig(ctx context.Context, request MCPConfigRequest) (MCPConfigResult, error) {
@@ -138,7 +158,7 @@ func ResolveBelayMCPIdentity(executable, home string) (MCPIdentity, error) {
 		return MCPIdentity{}, errors.New("invalid Belay executable")
 	}
 	info, err := os.Stat(resolved)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+	if err != nil || !executableFileInfo(runtime.GOOS, resolved, info) {
 		return MCPIdentity{}, errors.New("invalid Belay executable")
 	}
 	if hasUnsafePathText(resolved) || !filepath.IsAbs(resolved) {
@@ -189,7 +209,7 @@ func manageMCPConfig(
 		SchemaVersion: MCPConfigSchemaVersion,
 		Action:        request.Action,
 		OverallStatus: "partial",
-		Targets:       make([]MCPConfigTargetResult, 0, 2),
+		Targets:       make([]MCPConfigTargetResult, 0, 4),
 	}
 	if request.Action != MCPConfigInstall &&
 		request.Action != MCPConfigStatus &&
@@ -201,6 +221,16 @@ func manageMCPConfig(
 	available := make([]mcpTargetAdapter, len(targets))
 	copy(available, targets)
 	for index := range available {
+		if available[index].file != nil {
+			home, err := dependencies.home()
+			if err != nil {
+				continue
+			}
+			configPath, detected := available[index].file.locate(home)
+			available[index].configPath = configPath
+			available[index].detected = detected
+			continue
+		}
 		path, err := dependencies.lookPath(available[index].executable)
 		if err != nil || !usableExecutable(path) {
 			available[index].executable = ""
@@ -212,6 +242,7 @@ func manageMCPConfig(
 			continue
 		}
 		available[index].executable = path
+		available[index].detected = true
 	}
 
 	if identityErr != nil {
@@ -222,9 +253,9 @@ func manageMCPConfig(
 		for _, target := range available {
 			result.Targets = append(result.Targets, MCPConfigTargetResult{
 				Agent:     target.agent,
-				Detected:  target.executable != "",
+				Detected:  target.detected,
 				Scope:     "user",
-				Status:    failureStatus(request.Action, target.executable == ""),
+				Status:    failureStatus(request.Action, !target.detected),
 				Ownership: "unknown",
 				ErrorCode: stringPointer(code),
 			})
@@ -300,11 +331,11 @@ func manageMCPConfig(
 	for _, target := range available {
 		targetResult := MCPConfigTargetResult{
 			Agent:     target.agent,
-			Detected:  target.executable != "",
+			Detected:  target.detected,
 			Scope:     "user",
 			Ownership: "none",
 		}
-		if target.executable == "" {
+		if !target.detected {
 			if request.Action == MCPConfigInstall {
 				targetResult.Status = "skipped_not_detected"
 			} else {
@@ -392,6 +423,8 @@ func defaultMCPTargets() []mcpTargetAdapter {
 			removeArgs:       []string{"mcp", "remove", "--scope", "user", "belay"},
 			parseStatus:      parseClaudeMCPStatus,
 		},
+		cursorMCPTarget(),
+		antigravityMCPTarget(),
 	}
 }
 
@@ -505,12 +538,7 @@ func installAbsentMCPConfigTarget(
 	result MCPConfigTargetResult,
 	manifestChanged bool,
 ) (MCPConfigTargetResult, bool) {
-	addResult := runTargetCommand(
-		ctx,
-		dependencies,
-		target,
-		append(append([]string(nil), target.addPrefix...), append([]string{current.Command}, current.Args...)...),
-	)
+	addResult := addMCPTargetEntry(ctx, dependencies, target, current)
 	inspection := inspectMCPConfigTarget(ctx, dependencies, target)
 	if inspection.kind == mcpInspectionPresent &&
 		classifyMCPOwnership(inspection, current, manifest, manifestMissing, target.agent) == "current" {
@@ -551,7 +579,7 @@ func updateRecognizedMCPConfigTarget(
 		result.ErrorCode = stringPointer("verification_failed")
 		return result, manifestChanged
 	}
-	removeResult := runTargetCommand(ctx, dependencies, target, target.removeArgs)
+	removeResult := removeMCPTargetEntry(ctx, dependencies, target, []MCPIdentity{old})
 	removedState := inspectMCPConfigTarget(ctx, dependencies, target)
 	if removedState.kind != mcpInspectionAbsent {
 		result.Status = "failed"
@@ -562,12 +590,7 @@ func updateRecognizedMCPConfigTarget(
 		}
 		return result, manifestChanged
 	}
-	addResult := runTargetCommand(
-		ctx,
-		dependencies,
-		target,
-		append(append([]string(nil), target.addPrefix...), append([]string{current.Command}, current.Args...)...),
-	)
+	addResult := addMCPTargetEntry(ctx, dependencies, target, current)
 	post := inspectMCPConfigTarget(ctx, dependencies, target)
 	if post.kind == mcpInspectionPresent &&
 		classifyMCPOwnership(post, current, manifest, manifestMissing, target.agent) == "current" {
@@ -584,12 +607,7 @@ func updateRecognizedMCPConfigTarget(
 		result.ErrorCode = stringPointer("rollback_failed")
 		return result, manifestChanged
 	}
-	rollbackResult := runTargetCommand(
-		ctx,
-		dependencies,
-		target,
-		append(append([]string(nil), target.addPrefix...), append([]string{old.Command}, old.Args...)...),
-	)
+	rollbackResult := addMCPTargetEntry(ctx, dependencies, target, old)
 	rollbackInspection := inspectMCPConfigTarget(ctx, dependencies, target)
 	if rollbackResult.exitCode == 0 &&
 		classifyMCPOwnership(rollbackInspection, current, manifest, manifestValid, target.agent) == "recognized" {
@@ -644,7 +662,11 @@ func uninstallMCPConfigTarget(
 		status.ErrorCode = stringPointer("verification_failed")
 		return status, manifestChanged
 	}
-	remove := runTargetCommand(ctx, dependencies, target, target.removeArgs)
+	allowed := []MCPIdentity{current}
+	if prior, ok := manifestMCPIdentity(manifest, manifestState, target.agent); ok {
+		allowed = append(allowed, prior)
+	}
+	remove := removeMCPTargetEntry(ctx, dependencies, target, allowed)
 	post := inspectMCPConfigTarget(ctx, dependencies, target)
 	if post.kind != mcpInspectionAbsent {
 		status.Status = "failed"
@@ -669,6 +691,12 @@ func inspectMCPConfigTarget(
 	dependencies mcpConfigDependencies,
 	target mcpTargetAdapter,
 ) mcpInspection {
+	if target.file != nil {
+		if ctx.Err() != nil {
+			return mcpInspection{kind: mcpInspectionUnavailable, errorCode: "status_timeout"}
+		}
+		return target.file.inspect(target.configPath)
+	}
 	result := runTargetCommand(ctx, dependencies, target, target.statusArgs)
 	if result.stdoutOverflow || result.stderrOverflow {
 		return mcpInspection{
@@ -691,6 +719,69 @@ func runTargetCommand(
 	commandCtx, cancel := context.WithTimeout(ctx, mcpCommandTimeout)
 	defer cancel()
 	return dependencies.run(commandCtx, target.executable, args)
+}
+
+// addMCPTargetEntry writes one `belay` entry for the target. CLI targets run the
+// host add command; file targets rewrite their own registry.
+func addMCPTargetEntry(
+	ctx context.Context,
+	dependencies mcpConfigDependencies,
+	target mcpTargetAdapter,
+	identity MCPIdentity,
+) mcpCommandResult {
+	if target.file != nil {
+		if ctx.Err() != nil {
+			return mcpCommandResult{exitCode: -1}
+		}
+		return target.file.add(target.configPath, identity)
+	}
+	return runTargetCommand(
+		ctx,
+		dependencies,
+		target,
+		append(
+			append([]string(nil), target.addPrefix...),
+			append([]string{identity.Command}, identity.Args...)...,
+		),
+	)
+}
+
+// removeMCPTargetEntry removes the `belay` entry for the target. A file target
+// additionally re-verifies under the configuration lock that the entry on disk
+// is one of the allowed Belay identities before deleting it.
+func removeMCPTargetEntry(
+	ctx context.Context,
+	dependencies mcpConfigDependencies,
+	target mcpTargetAdapter,
+	allowed []MCPIdentity,
+) mcpCommandResult {
+	if target.file != nil {
+		if ctx.Err() != nil {
+			return mcpCommandResult{exitCode: -1}
+		}
+		return target.file.remove(target.configPath, allowed)
+	}
+	return runTargetCommand(ctx, dependencies, target, target.removeArgs)
+}
+
+// manifestMCPIdentity returns the prior Belay identity the ownership manifest
+// recorded for the target, when the manifest is valid.
+func manifestMCPIdentity(
+	manifest mcpOwnershipManifest,
+	manifestState manifestLoadState,
+	agent string,
+) (MCPIdentity, bool) {
+	if manifestState != manifestValid {
+		return MCPIdentity{}, false
+	}
+	target, ok := manifest.Targets[agent]
+	if !ok || target.Scope != "user" {
+		return MCPIdentity{}, false
+	}
+	return MCPIdentity{
+		Command: target.Command,
+		Args:    append([]string(nil), target.Args...),
+	}, true
 }
 
 func runMCPCommand(ctx context.Context, executable string, args []string) mcpCommandResult {
@@ -720,18 +811,7 @@ func runMCPCommand(ctx context.Context, executable string, args []string) mcpCom
 }
 
 func allowedMCPEnvironment() []string {
-	names := []string{
-		"HOME",
-		"USER",
-		"TMPDIR",
-		"PATH",
-		"LANG",
-		"LC_ALL",
-		"CODEX_HOME",
-		"CLAUDE_CONFIG_DIR",
-		"XDG_CONFIG_HOME",
-		"XDG_DATA_HOME",
-	}
+	names := numbat.HostEnvironmentNames()
 	result := make([]string, 0, len(names)+3)
 	for _, name := range names {
 		if value, ok := os.LookupEnv(name); ok {
@@ -1097,12 +1177,12 @@ func failureStatus(action MCPConfigAction, undetected bool) string {
 
 func targetLockFailure(action MCPConfigAction, target mcpTargetAdapter) MCPConfigTargetResult {
 	status := "unavailable"
-	if action == MCPConfigInstall && target.executable == "" {
+	if action == MCPConfigInstall && !target.detected {
 		status = "skipped_not_detected"
 	}
 	return MCPConfigTargetResult{
 		Agent:     target.agent,
-		Detected:  target.executable != "",
+		Detected:  target.detected,
 		Scope:     "user",
 		Status:    status,
 		Ownership: "unknown",

@@ -33,6 +33,7 @@ type Candidate struct {
 	UserFeedback     string               `json:"user_feedback,omitempty"`
 	Evidence         EvidenceSet          `json:"evidence"`
 	OutcomeRefs      []string             `json:"outcome_refs,omitempty"`
+	EpisodeRefs      []string             `json:"episode_refs,omitempty"`
 	ExistingRefs     []ExperienceRef      `json:"existing_experience_refs,omitempty"`
 	Proposal         ExperienceProposal   `json:"proposed_experience"`
 	Provenance       Provenance           `json:"provenance"`
@@ -112,6 +113,7 @@ type Experience struct {
 	Guidance          Guidance       `json:"guidance"`
 	Verifier          Verifier       `json:"verifier"`
 	Evidence          EvidenceSet    `json:"evidence"`
+	EpisodeRefs       []string       `json:"episode_refs,omitempty"`
 	Provenance        Provenance     `json:"provenance"`
 	Governance        Governance     `json:"governance"`
 	ContentHash       string         `json:"content_hash"`

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/DoplexLabs/belay-engine/internal/acquisition/numbat"
 	"github.com/DoplexLabs/belay-engine/internal/analysis"
+	"github.com/DoplexLabs/belay-engine/internal/localapp"
 	"github.com/DoplexLabs/belay-engine/internal/pipeline"
 	"github.com/DoplexLabs/belay-engine/internal/presentation/readmodel"
 	"github.com/DoplexLabs/belay-engine/internal/storage/local"
@@ -125,15 +127,17 @@ func runImport(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 func runSessions(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("sessions", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	dbPath := flags.String("db", "", "path to the Belay Local SQLite database")
+	dbPath := flags.String("db", "", "path to the Belay Local SQLite database (default <home>/belay.sqlite)")
+	home := flags.String("home", "", "Belay Local state directory (default BELAY_HOME or ~/.belay)")
 	limit := flags.Int("limit", 20, "maximum sessions")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *dbPath == "" {
-		return errors.New("--db is required")
+	databasePath, err := resolveLocalDatabase(*dbPath, *home)
+	if err != nil {
+		return err
 	}
-	store, err := openLocalStore(*dbPath)
+	store, err := openLocalStore(databasePath)
 	if err != nil {
 		return err
 	}
@@ -148,16 +152,21 @@ func runSessions(ctx context.Context, args []string, stdout, stderr io.Writer) e
 func runTimeline(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("timeline", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	dbPath := flags.String("db", "", "path to the Belay Local SQLite database")
+	dbPath := flags.String("db", "", "path to the Belay Local SQLite database (default <home>/belay.sqlite)")
+	home := flags.String("home", "", "Belay Local state directory (default BELAY_HOME or ~/.belay)")
 	sessionID := flags.String("session", "", "Belay session ID")
 	limit := flags.Int("limit", 100, "maximum events")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *dbPath == "" || *sessionID == "" {
-		return errors.New("--db and --session are required")
+	if *sessionID == "" {
+		return errors.New("--session is required")
 	}
-	store, err := openLocalStore(*dbPath)
+	databasePath, err := resolveLocalDatabase(*dbPath, *home)
+	if err != nil {
+		return err
+	}
+	store, err := openLocalStore(databasePath)
 	if err != nil {
 		return err
 	}
@@ -172,7 +181,8 @@ func runTimeline(ctx context.Context, args []string, stdout, stderr io.Writer) e
 func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("prune", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	dbPath := flags.String("db", "", "path to the Belay Local SQLite database")
+	dbPath := flags.String("db", "", "path to the Belay Local SQLite database (default <home>/belay.sqlite)")
+	home := flags.String("home", "", "Belay Local state directory (default BELAY_HOME or ~/.belay)")
 	maxAge := flags.Duration("max-age", 0, "delete payloads older than this age")
 	maxEvents := flags.Int("max-events", 0, "retain at most this many canonical events")
 	maxBytes := flags.Int64("max-bytes", 0, "retain at most this many encrypted payload bytes")
@@ -180,15 +190,16 @@ func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *dbPath == "" {
-		return errors.New("--db is required")
+	databasePath, err := resolveLocalDatabase(*dbPath, *home)
+	if err != nil {
+		return err
 	}
 	policy := local.RetentionPolicy{
 		MaxAge:          *maxAge,
 		MaxEventCount:   *maxEvents,
 		MaxPayloadBytes: *maxBytes,
 	}
-	store, err := openLocalStore(*dbPath)
+	store, err := openLocalStore(databasePath)
 	if err != nil {
 		return err
 	}
@@ -228,8 +239,32 @@ func runVerifyNumbat(ctx context.Context, args []string, stderr io.Writer) error
 	})
 }
 
+// resolveLocalDatabase returns the explicit --db path, or else the database
+// that Belay Local keeps under --home (BELAY_HOME or ~/.belay by default).
+// The default is only used when it already exists, so a read command never
+// creates an empty store in the wrong place.
+func resolveLocalDatabase(dbPath, home string) (string, error) {
+	if dbPath != "" {
+		return dbPath, nil
+	}
+	paths, err := localapp.ResolvePaths(home)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(paths.Database); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf(
+				"no Belay Local database at %s; run belay quickstart or belay scan first, or pass --db PATH",
+				paths.Database,
+			)
+		}
+		return "", fmt.Errorf("inspect Belay Local database: %w", err)
+	}
+	return paths.Database, nil
+}
+
 func openLocalStore(path string) (*local.Store, error) {
-	return local.Open(path, local.NewMacOSKeychainProvider())
+	return local.Open(path, local.NewPlatformKeyProvider(path))
 }
 
 func writeJSON(writer io.Writer, value any) error {
@@ -246,7 +281,7 @@ Commands:
   quickstart      consent to private setup, monitor-only hooks, scan, and browser
   local           scan agents and run the offline Local browser
   scan            discover and backfill supported local agent history
-  agents          show Numbat's local agent inventory
+  agents          show the Codex, Claude Code, Cursor, and Antigravity agent inventory
   analyze         refine deterministic issues with your installed agent
   hooks           install, inspect, or remove monitor-only live hooks
   mcp             run the Local MCP server over stdio
@@ -254,18 +289,19 @@ Commands:
   doctor          verify Local configuration, storage, and Numbat discovery
   telemetry       show or switch the de-identified usage ping (status, on, off)
   updates         show, check, or switch release notifications
-  import          import strict Numbat 0.3.0 NDJSON into Belay Local
+  import          import strict Numbat 0.3.0 or 0.4.0 NDJSON into Belay Local
   sessions        list Local session summaries
   timeline        get one Local session timeline
   prune           inspect retention bounds; deletion requires --apply
   verify-numbat   verify a pinned Numbat binary checksum and version marker
 
-belay quickstart changes only local Belay state and detected Codex/Claude hook,
-skill, and user-scoped MCP configuration. Hooks are monitor-only. MCP can read
-local evidence and store bounded fix proposals or application records, but it
-does not apply file changes. Belay Local retains full local transcripts
-encrypted on-device. The only upload is a de-identified install and daily
-active ping (see belay telemetry). Packaged builds also read public GitHub
+belay quickstart changes only local Belay state and detected
+Codex/Claude/Cursor/Antigravity hook, skill, and user-scoped MCP configuration.
+Hooks are monitor-only. MCP can read local evidence and store bounded fix
+proposals or application records, but it does not apply file changes. Belay
+Local retains full local transcripts encrypted on-device. The only upload is a
+de-identified install and daily active ping (see belay telemetry; BELAY_TELEMETRY=0 or DO_NOT_TRACK=1 turn it
+off). Packaged builds also read public GitHub
 release metadata at most every 18 hours (see belay updates). Use --no-mcp to
 skip MCP registration and --no-open to print the loopback URL without opening
 a browser.`)

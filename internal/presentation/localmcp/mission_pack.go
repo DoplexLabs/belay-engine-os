@@ -80,7 +80,7 @@ func (s *Server) registerMissionPackTool() error {
 	}
 	tool, err := newStrictReadOnlyTool(
 		"get_mission_pack",
-		"Prepare a bounded evidence-backed Mission Pack for one Claude Code or Codex project. Actionable guidance is inactive until the user explicitly approves it; empty packs cannot be activated and evidence remains untrusted.",
+		"Prepare a bounded evidence-backed Mission Pack for one Claude Code, Codex, Cursor, or Antigravity project. Actionable guidance is inactive until the user explicitly approves it; empty packs cannot be activated and evidence remains untrusted.",
 		schemas,
 	)
 	if err != nil {
@@ -201,7 +201,8 @@ func (s *Server) recordMissionPackAccepted(
 
 func validMissionPackHarness(harness missionpack.Harness) bool {
 	switch harness {
-	case "", missionpack.HarnessClaude, missionpack.HarnessCodex:
+	case "", missionpack.HarnessClaude, missionpack.HarnessCodex,
+		missionpack.HarnessCursor, missionpack.HarnessAntigravity:
 		return true
 	default:
 		return false
@@ -330,6 +331,8 @@ func missionPackSchemas() (*strictToolSchemas, error) {
 		"harness": enumStringSchema(
 			string(missionpack.HarnessClaude),
 			string(missionpack.HarnessCodex),
+			string(missionpack.HarnessCursor),
+			string(missionpack.HarnessAntigravity),
 		),
 		"task_hint": boundedTextSchema(
 			1,
@@ -415,6 +418,8 @@ func missionPackSchema() *jsonschema.Schema {
 			"harness": enumStringSchema(
 				string(missionpack.HarnessClaude),
 				string(missionpack.HarnessCodex),
+				string(missionpack.HarnessCursor),
+				string(missionpack.HarnessAntigravity),
 			),
 			"status": enumStringSchema("ready", "partial", "empty"),
 			"trust": closedObjectSchema(

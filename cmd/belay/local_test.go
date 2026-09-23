@@ -887,7 +887,7 @@ func TestQuickstartHelpStatesConsentAndPrivacyBoundary(t *testing.T) {
 	}
 	for _, required := range []string{
 		"monitor-only hooks",
-		"Codex and Claude Code",
+		"Codex, Claude Code, Cursor, and\nAntigravity",
 		"loopback-only",
 		"Full local transcripts are retained encrypted on-device",
 		"de-identified usage ping",
@@ -992,7 +992,8 @@ exit 8`)
 		t.Fatal("quickstart hooks reported complete")
 	}
 	if got := stderr.String(); got !=
-		"belay quickstart: hooks codex=configured claude=failed\n" {
+		"belay quickstart: hooks codex=configured claude=failed "+
+			"cursor=skipped_not_detected antigravity=skipped_not_detected\n" {
 		t.Fatalf("hook summary = %q", got)
 	}
 	if strings.Contains(stderr.String(), "private-hook-error") {
@@ -1003,6 +1004,7 @@ exit 8`)
 func TestScanAgentsAndDoctorInventoryProjectionIsPayloadFree(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), "missing-claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(t.TempDir(), "missing-cursor"))
 	const inventoryJSON = `[
 		{
 			"agent":"codex",
@@ -1021,6 +1023,25 @@ func TestScanAgentsAndDoctorInventoryProjectionIsPayloadFree(t *testing.T) {
 			"wired":"PRIVATE_CLAUDE_WIRING_CANARY",
 			"setup_hint":"PRIVATE_CLAUDE_SETUP_HINT_CANARY",
 			"nested_unknown":{"secret":"PRIVATE_NESTED_UNKNOWN_CANARY"}
+		},
+		{
+			"agent":"cursor",
+			"present":false,
+			"detected":true,
+			"hook":"PRIVATE_CURSOR_HOOK_CANARY",
+			"wired":"PRIVATE_CURSOR_WIRING_CANARY",
+			"setup_hint":"PRIVATE_CURSOR_SETUP_HINT_CANARY",
+			"future_field":"PRIVATE_CURSOR_UNKNOWN_FIELD_CANARY"
+		},
+		{
+			"agent":"Antigravity",
+			"present":false,
+			"detected":true,
+			"at_rest":"PRIVATE_ANTIGRAVITY_AT_REST_CANARY (hook-only)",
+			"hook":"PRIVATE_ANTIGRAVITY_HOOK_CANARY",
+			"wired":"PRIVATE_ANTIGRAVITY_WIRING_CANARY",
+			"setup_hint":"install: numbat hook install --agent PRIVATE_ANTIGRAVITY_SETUP_HINT_CANARY",
+			"future_field":"PRIVATE_ANTIGRAVITY_UNKNOWN_FIELD_CANARY"
 		},
 		{
 			"agent":"future-agent",
@@ -1073,6 +1094,9 @@ func TestScanAgentsAndDoctorInventoryProjectionIsPayloadFree(t *testing.T) {
 				"/Users/private",
 				`"hook"`,
 				`"wired"`,
+				`"at_rest"`,
+				"hook-only",
+				"numbat hook install",
 				"future-agent",
 			} {
 				if strings.Contains(stdout.String(), forbidden) {
@@ -1104,21 +1128,39 @@ func TestScanAgentsAndDoctorInventoryProjectionIsPayloadFree(t *testing.T) {
 					)
 				}
 			}
-			if len(projected.Rows) != 2 ||
+			if len(projected.Rows) != 4 ||
 				projected.Rows[0] != (cliInventoryRow{
 					Agent: "codex", Present: false, Detected: true,
 				}) ||
 				projected.Rows[1] != (cliInventoryRow{
 					Agent: "claude", Present: false, Detected: false,
+				}) ||
+				projected.Rows[2] != (cliInventoryRow{
+					Agent: "cursor", Present: false, Detected: true,
+				}) ||
+				projected.Rows[3] != (cliInventoryRow{
+					Agent: "antigravity", Present: false, Detected: true,
 				}) {
 				t.Fatalf("%s projected rows = %+v", command.name, projected.Rows)
 			}
-			if len(projected.LaunchTargets) != 2 {
+			if len(projected.LaunchTargets) != 4 {
 				t.Fatalf(
-					"%s launch target count = %d, want 2",
+					"%s launch target count = %d, want 4",
 					command.name,
 					len(projected.LaunchTargets),
 				)
+			}
+			for _, agent := range []string{"cursor", "antigravity"} {
+				if projected.LaunchTargets[agent] != (cliInventoryRow{
+					Agent: agent, Present: false, Detected: true,
+				}) {
+					t.Fatalf(
+						"%s %s launch target = %+v",
+						command.name,
+						agent,
+						projected.LaunchTargets[agent],
+					)
+				}
 			}
 		})
 	}
@@ -1420,6 +1462,7 @@ func TestRunScanDrainsRecentBeforeAndAfterHistoricalBackfill(t *testing.T) {
 	})
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), "missing-claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "missing-codex"))
+	t.Setenv("BELAY_CURSOR_HOME", filepath.Join(t.TempDir(), "missing-cursor"))
 
 	recentBeforeErr := errors.New("recent transcript drain before scan")
 	numbatErr := errors.New("numbat historical scan")
@@ -2236,4 +2279,32 @@ exit 2
 		t.Fatal(err)
 	}
 	return binary
+}
+
+func TestHooksHelpNamesEverySupportedHarnessTarget(t *testing.T) {
+	for _, action := range []string{"install", "status", "uninstall"} {
+		t.Run(action, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := runHooks(
+				context.Background(),
+				[]string{action, "--help"},
+				&stdout,
+				&stderr,
+			)
+			if !errors.Is(err, flag.ErrHelp) {
+				t.Fatalf("runHooks(%s --help) error = %v, want flag.ErrHelp", action, err)
+			}
+			for _, required := range []string{
+				"codex",
+				"claude (Claude Code)",
+				"cursor",
+				"antigravity",
+				"monitor-only",
+			} {
+				if !strings.Contains(stderr.String(), required) {
+					t.Fatalf("hooks %s help missing %q:\n%s", action, required, stderr.String())
+				}
+			}
+		})
+	}
 }
