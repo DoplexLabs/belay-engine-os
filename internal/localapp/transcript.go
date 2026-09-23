@@ -1256,15 +1256,7 @@ func saveTranscriptCursor(path string, cursor transcriptCursor) error {
 	if err := os.Rename(tempPath, path); err != nil {
 		return err
 	}
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	if err := directory.Sync(); err != nil {
-		directory.Close()
-		return err
-	}
-	return directory.Close()
+	return syncDirectory(filepath.Dir(path))
 }
 
 func discoverGitRemote(ctx context.Context, cwd string) string {

@@ -481,7 +481,7 @@ func (s *Server) listExperienceProposals(
 	input.CWD = strings.TrimSpace(input.CWD)
 	if input.CWD == "" ||
 		len(input.CWD) > maxExperienceLearningCWDBytes ||
-		!filepath.IsAbs(input.CWD) ||
+		!absoluteInputPath(input.CWD) ||
 		!input.Harness.Valid() {
 		return listExperienceProposalsOutput{},
 			newStrictToolFailure(strictInvalidInput)
@@ -537,7 +537,7 @@ func (s *Server) listActiveExperiences(
 	input.CWD = strings.TrimSpace(input.CWD)
 	if input.CWD == "" ||
 		len(input.CWD) > maxExperienceLearningCWDBytes ||
-		!filepath.IsAbs(input.CWD) {
+		!absoluteInputPath(input.CWD) {
 		return listActiveExperiencesOutput{},
 			newStrictToolFailure(strictInvalidInput)
 	}

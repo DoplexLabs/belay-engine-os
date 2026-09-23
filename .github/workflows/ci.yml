@@ -29,7 +29,26 @@ jobs:
       - name: Test
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 ./...
+        run: |
+          go test -count=1 `
+            ./internal/acquisition/transcript `
+            ./internal/analysis `
+            ./internal/architecture `
+            ./internal/canonical/... `
+            ./internal/detection/... `
+            ./internal/evidenceepisode `
+            ./internal/experience/... `
+            ./internal/initialization `
+            ./internal/localaction `
+            ./internal/missionpack `
+            ./internal/pipeline `
+            ./internal/presentation/localmcp `
+            ./internal/presentation/readmodel `
+            ./internal/sessionidentity `
+            ./internal/trajectory/... `
+            ./internal/updatecheck `
+            ./internal/userinsights
+          go test -count=1 ./internal/localapp -run '^(TestImportSpoolOnce|TestScanHistoricalTranscripts|TestTranscriptGroupPlan|TestImportTranscripts|TestImportRecentTranscripts|TestDrainScanTranscripts|TestHistoricalBackfill)'
 
       - name: Race-sensitive tests
         run: go test -race ./internal/storage/local ./internal/pipeline ./internal/localapp

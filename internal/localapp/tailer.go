@@ -232,16 +232,8 @@ func saveTailCursor(path string, cursor TailCursor) error {
 	if err := os.Rename(tempPath, path); err != nil {
 		return err
 	}
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return fmt.Errorf("open live cursor directory: %w", err)
-	}
-	if err := directory.Sync(); err != nil {
-		directory.Close()
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
 		return fmt.Errorf("sync live cursor directory: %w", err)
-	}
-	if err := directory.Close(); err != nil {
-		return fmt.Errorf("close live cursor directory: %w", err)
 	}
 	return nil
 }

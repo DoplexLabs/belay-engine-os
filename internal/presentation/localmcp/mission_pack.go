@@ -3,7 +3,6 @@ package localmcp
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -125,7 +124,7 @@ func (s *Server) getMissionPack(
 		return missionpack.Pack{}, newStrictToolFailure(strictInvalidInput)
 	}
 	if len(input.CWD) > maxMissionPackCWDBytes ||
-		(input.CWD != "" && !filepath.IsAbs(input.CWD)) {
+		(input.CWD != "" && !absoluteInputPath(input.CWD)) {
 		return missionpack.Pack{}, newStrictToolFailure(strictInvalidInput)
 	}
 	if len(input.IssueID) > maxMissionPackIssueIDBytes {

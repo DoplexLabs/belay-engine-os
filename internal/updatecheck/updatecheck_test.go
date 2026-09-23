@@ -25,7 +25,7 @@ func TestCheckCachesCompatibleReleaseForEighteenHours(t *testing.T) {
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 			Body: io.NopCloser(strings.NewReader(`[
 			{"tag_name":"v0.0.1-alpha.11","draft":false,"published_at":"2026-09-16T10:00:00Z","assets":[{"name":"belay-linux-amd64.tar.gz"}]},
-			{"tag_name":"v0.0.1-alpha.10","name":"Alpha 10","draft":false,"html_url":"https://example.invalid/release","published_at":"2026-09-16T09:00:00Z","assets":[{"name":"belay-v0.0.1-alpha.10-darwin-arm64.tar.gz"}]},
+			{"tag_name":"v0.0.1-alpha.10","name":"Alpha 10","draft":false,"html_url":"https://example.invalid/release","published_at":"2026-09-16T09:00:00Z","assets":[{"name":"belay-v0.0.1-alpha.10-darwin-arm64.tar.gz"},{"name":"belay-v0.0.1-alpha.10-windows-amd64.zip"}]},
 			{"tag_name":"v0.0.1-alpha.6","draft":true,"published_at":"2026-09-16T08:00:00Z","assets":[{"name":"belay-v0.0.1-alpha.6-darwin-arm64.tar.gz"}]}
 		]`)),
 		}, nil

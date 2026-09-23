@@ -1040,7 +1040,7 @@ func missionPackFact(event canonical.Event) (string, string) {
 		value = filepath.ToSlash(filepath.Clean(
 			strings.ReplaceAll(value, "\\", "/"),
 		))
-		if filepath.IsAbs(value) || value == "." ||
+		if filepath.IsAbs(value) || strings.HasPrefix(value, "/") || value == "." ||
 			strings.HasPrefix(value, "../") ||
 			isWindowsAbsoluteMissionPackPath(value) {
 			return "", ""
