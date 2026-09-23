@@ -43,8 +43,11 @@ func TestReportDashboardHidesPatternsAndShowsDebriefs(t *testing.T) {
 		`await apiGet("/v1/user-insights?limit=3")`,
 		`void loadReportHabits();`,
 		`function renderReportHabits()`,
-		`function renderReportHabitCard(session, harness)`,
+		`function renderReportHabitCard(session, harness, showPattern)`,
 		`function renderReportHabitSummary(readySessions)`,
+		`function createWaitingPattern(issue)`,
+		`Repeated pattern`,
+		`This uses that account and usually takes one to three minutes.`,
 		`"Read the full debrief"`,
 		`in the background.`,
 		`"Your recent sessions at a glance"`,
@@ -52,6 +55,9 @@ func TestReportDashboardHidesPatternsAndShowsDebriefs(t *testing.T) {
 		if !strings.Contains(app, required) {
 			t.Errorf("Report dashboard browser contract is missing %q", required)
 		}
+	}
+	if strings.Contains(app, `No harness installed to write this debrief.`) {
+		t.Error("app.js still contains \"No harness installed to write this debrief.\"")
 	}
 	if strings.Contains(app, `"Your top recurring pattern"`) {
 		t.Error("Report heading must no longer be pattern-driven")

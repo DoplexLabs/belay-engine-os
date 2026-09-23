@@ -5867,11 +5867,53 @@ h1 {
 
 .report-habit-pending {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 14px 0 4px;
   color: var(--muted);
   font-size: 14px;
+  line-height: 1.45;
+}
+
+.report-habit-pattern {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.report-habit-pattern .eyebrow {
+  margin: 0;
+  font-weight: 500;
+}
+
+.report-habit-pattern-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.report-habit-pattern-metrics {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.brief-empty .report-habit-pattern p {
+  font-weight: 400;
+}
+
+.brief-empty .report-habit-pattern .eyebrow {
+  font-weight: 500;
+}
+
+.report-habit-pattern > .secondary-button {
+  align-self: flex-start;
 }
 
 .report-habit-pending p {
