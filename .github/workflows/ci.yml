@@ -142,7 +142,9 @@ jobs:
             ./internal/trajectory/... `
             ./internal/updatecheck `
             ./internal/userinsights
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -count=1 ./internal/localapp -run '^(TestImportSpoolOnce|TestScanHistoricalTranscripts|TestTranscriptGroupPlan|TestImportTranscripts|TestImportRecentTranscripts|TestDrainScanTranscripts|TestHistoricalBackfill)'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Windows installer contract
         run: .\scripts\install_windows_test.ps1

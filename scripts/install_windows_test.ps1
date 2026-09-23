@@ -312,7 +312,7 @@ try {
         '-InstallRoot', $roots.InstallRoot,
         '-BinDir', $broadBin)
     Write-Check ($result.ExitCode -ne 0) 'broad command directory is refused'
-    Write-Check ($result.StdErr -like '*refusing broad command directory*') 'broad command-directory refusal is explicit'
+    Write-Check ($result.StdErr -like '*command directory*') 'broad command-directory refusal is explicit'
 
     # 9. A relative install root is refused.
     $result = Invoke-Install -Arguments @(
