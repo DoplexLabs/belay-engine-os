@@ -39,6 +39,7 @@ func TestCostIssueAttentionAssetsExposeRankedIssuesAndSeparateSafety(t *testing.
 		`await apiGet("/v1/cost-issues?limit=5")`,
 		`readText(response.schema_version) !== "belay.cost-issues.v1"`,
 		`formatIssueDollarCost(issue.cost)`,
+		`Why Belay flagged this · ${summary}`,
 		`readText(excerpt && excerpt.text)`,
 		`setAttentionMode("safety")`,
 		`"propose-cost-issue-fix.v1"`,
@@ -53,6 +54,7 @@ func TestCostIssueAttentionAssetsExposeRankedIssuesAndSeparateSafety(t *testing.
 		`.attention-workspace.cost-mode`,
 		`.cost-issue-card`,
 		`.cost-issue-excerpt blockquote`,
+		`.issue-evidence-basis`,
 		`.cost-issue-fix-diff`,
 	} {
 		if !strings.Contains(styles, required) {

@@ -1040,7 +1040,7 @@ func missionPackFact(event canonical.Event) (string, string) {
 		value = filepath.ToSlash(filepath.Clean(
 			strings.ReplaceAll(value, "\\", "/"),
 		))
-		if filepath.IsAbs(value) || value == "." ||
+		if filepath.IsAbs(value) || strings.HasPrefix(value, "/") || value == "." ||
 			strings.HasPrefix(value, "../") ||
 			isWindowsAbsoluteMissionPackPath(value) {
 			return "", ""
@@ -1123,7 +1123,8 @@ func genericMissionPackExecutable(value string) bool {
 		"sh", "bash", "zsh", "fish", "dash", "ash", "ksh", "csh",
 		"tcsh", "pwsh", "powershell", "cmd", "nu",
 		"nushell", "xonsh", "shell",
-		"belay", "numbat", "claude", "codex":
+		"belay", "numbat", "claude", "codex", "cursor", "cursor-agent",
+		"antigravity", "agy":
 		return true
 	default:
 		return false

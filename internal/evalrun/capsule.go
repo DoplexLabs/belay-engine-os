@@ -103,7 +103,7 @@ func LoadPrivateEvalCapsule(
 	}
 	store, err := local.Open(
 		absolute,
-		local.NewMacOSKeychainProvider(),
+		local.NewPlatformKeyProvider(absolute),
 	)
 	if err != nil {
 		return PrivateEvalCapsule{}, fmt.Errorf(

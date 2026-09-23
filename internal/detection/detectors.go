@@ -154,12 +154,33 @@ func toolFailureAbsenceCapability(preparedSession) (AbsenceCapability, string) {
 	return AbsenceIncomplete, "tool_failure_absence_unsupported"
 }
 
+// harnessProvidesHookCoverage reports whether a harness installs Belay-owned
+// hooks deep enough to make absence of evidence meaningful: tool-call depth
+// around mutations and approvals plus a lifecycle session terminal. Codex,
+// Claude Code, and Cursor all meet that bar; anything else is treated as
+// unknown coverage so absence-based detectors stay silent.
+//
+// Antigravity is deliberately absent. Its evidence is Numbat live hook events
+// only (command_exec, file_read, file_write, network_indicator, tool_call,
+// tool_result) and Belay has not verified that those hooks deliver a
+// lifecycle session terminal or an approval/decision event stream. Until that
+// is verified, absence of evidence in an Antigravity session is not
+// meaningful, so it must stay out of this list; adding it is a deliberate
+// change guarded by a test.
+func harnessProvidesHookCoverage(agent string) bool {
+	switch agent {
+	case "codex", "claude-code", "cursor":
+		return true
+	default:
+		return false
+	}
+}
+
 func permissionAbsenceCapability(session preparedSession) (AbsenceCapability, string) {
 	for _, item := range session.events {
 		if !item.historical &&
 			item.event.Source.Kind == "hook" &&
-			(item.event.Source.Agent == "codex" ||
-				item.event.Source.Agent == "claude-code") {
+			harnessProvidesHookCoverage(item.event.Source.Agent) {
 			return AbsenceSupported, ""
 		}
 	}
@@ -521,7 +542,7 @@ func retainedVerificationLiveCompatible(session preparedSession) bool {
 			hasTerminalCoverage = hasTerminalCoverage || event.Coverage.Depth == "lifecycle"
 		}
 	}
-	return (harness == "codex" || harness == "claude-code") &&
+	return harnessProvidesHookCoverage(harness) &&
 		hasMutationCoverage &&
 		hasTerminalCoverage
 }

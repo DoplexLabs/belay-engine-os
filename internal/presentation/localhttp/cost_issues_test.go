@@ -98,6 +98,8 @@ func TestCostIssueRoutesRequireAuthValidateAndReturnEvidence(t *testing.T) {
 	}
 	if len(list.Data) != 1 ||
 		list.Data[0].Excerpts[0].Text != "FAIL package/example" ||
+		list.Data[0].EvidenceBasis.Kind !=
+			issueintel.EvidenceBasisTranscriptExcerpt ||
 		repository.query.Limit != 5 {
 		t.Fatalf("cost issue list/query = %+v/%+v", list, repository.query)
 	}

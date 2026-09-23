@@ -42,6 +42,16 @@ Go 1.27 is required.
 make verify
 ```
 
+Every change must also keep the Windows target building and vetting cleanly:
+
+```bash
+make verify-windows
+```
+
+`verify-windows` cross-compiles and vets every package for `windows/amd64` and
+builds `windows/arm64`. It runs from macOS or Linux and needs no Windows
+machine. A change that breaks it is not mergeable.
+
 For release-surface-only changes:
 
 ```bash
@@ -51,12 +61,34 @@ make verify-release-surface
 On an Apple Silicon Mac, a local non-publishing package check is:
 
 ```bash
-make alpha-readiness ALPHA_VERSION=0.0.1-alpha.8
+make alpha-readiness ALPHA_VERSION=0.0.1-alpha.11
+```
+
+On a clean checkout, a local non-publishing Windows archive check is:
+
+```bash
+make preview-windows ALPHA_VERSION=0.0.1-alpha.11 WINDOWS_ARCH=amd64
 ```
 
 The packaging command requires a clean checkout by default. A dirty artifact
 created with `BELAY_ALPHA_ALLOW_DIRTY=1` is for local validation only and must
 not be distributed.
+
+## Windows-affecting changes
+
+A change that touches platform-conditional behavior — the data-key store,
+executable discovery and suffixes, path handling, subprocess environments,
+hook or MCP configuration writes, packaging, or the installers — must:
+
+- keep `make verify-windows` passing;
+- state in the pull request which gates of
+  `docs/launch/windows-clean-machine-alpha-qa.md` it affects;
+- be re-validated against that checklist on a real Windows machine before the
+  Windows channel can claim the behavior. Cross-compilation and the read-only
+  packaged smoke test do not satisfy those gates.
+
+Do not assert Windows behavior in documentation that only a Windows run can
+establish. The Windows clean-machine pass has not been executed yet.
 
 ## Pull requests
 

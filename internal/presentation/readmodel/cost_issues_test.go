@@ -41,6 +41,9 @@ func TestCostIssueReadModelListsAndGetsRankedIssues(t *testing.T) {
 			IssueID:    "csi_test",
 			DetectorID: issueintel.DetectorRetryLoop,
 			Headline:   "Tests failed repeatedly",
+			Excerpts: []issueintel.Excerpt{{
+				Text: "FAIL package/example",
+			}},
 		}},
 	}
 	service := New(
@@ -66,7 +69,10 @@ func TestCostIssueReadModelListsAndGetsRankedIssues(t *testing.T) {
 			Limit:           5,
 			ProjectIdentity: "project-a",
 			DetectorID:      issueintel.DetectorRetryLoop,
-		}) {
+			RankingPolicy:   issueintel.RankingPolicyDeterministic,
+		}) ||
+		list.Data[0].EvidenceBasis.Kind !=
+			issueintel.EvidenceBasisTranscriptExcerpt {
 		t.Fatalf("cost issue list/query = %+v/%+v", list, repository.query)
 	}
 	detail, err := service.GetCostIssue(context.Background(), "csi_test")
@@ -78,6 +84,41 @@ func TestCostIssueReadModelListsAndGetsRankedIssues(t *testing.T) {
 		"csi_missing",
 	); err != ErrNotFound {
 		t.Fatalf("missing cost issue error = %v", err)
+	}
+}
+
+func TestCostIssueReadModelCanRestoreLegacyRankingPolicy(t *testing.T) {
+	repository := &costIssueReadRepository{}
+	service := New(
+		issueTestCoreRepository{},
+		WithCostIssueRepository(repository),
+		WithCostIssueRankingPolicy(issueintel.RankingPolicyLegacy),
+	)
+	if _, err := service.ListCostIssues(
+		context.Background(),
+		CostIssueListRequest{Limit: 5},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if repository.query.RankingPolicy != issueintel.RankingPolicyLegacy {
+		t.Fatalf("ranking policy = %q", repository.query.RankingPolicy)
+	}
+}
+
+func TestCostIssueEvidenceBasisPrefersEpisodesAndExplainsMissingExcerpts(
+	t *testing.T,
+) {
+	episode := costIssueEvidenceBasis(issueintel.Issue{
+		EpisodeRefs: []string{"eep_test"},
+		Excerpts:    []issueintel.Excerpt{{Text: "FAIL"}},
+	})
+	if episode.Kind != issueintel.EvidenceBasisActionSequence {
+		t.Fatalf("episode evidence basis = %+v", episode)
+	}
+	activity := costIssueEvidenceBasis(issueintel.Issue{})
+	if activity.Kind != issueintel.EvidenceBasisRetainedActivity ||
+		activity.Summary == "" {
+		t.Fatalf("activity evidence basis = %+v", activity)
 	}
 }
 

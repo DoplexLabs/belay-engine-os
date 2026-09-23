@@ -43,7 +43,21 @@ type Input struct {
 }
 
 type Result struct {
-	Candidates []experience.Candidate
+	Candidates                  []experience.Candidate
+	FailedApproachRecoveries    []FailedApproachRecovery
+	SuccessfulProcedureEpisodes []SuccessfulProcedureEpisode
+}
+
+type FailedApproachRecovery struct {
+	CandidateID     string
+	ProjectIdentity string
+	SessionKey      string
+	FailureCall     transcript.Turn
+	FailureResult   transcript.Turn
+	SuccessCall     transcript.Turn
+	SuccessResult   transcript.Turn
+	OutcomeRefs     []string
+	OccurredAt      time.Time
 }
 
 type turnKey struct {
@@ -59,6 +73,8 @@ type compiler struct {
 	outcomes        []trajectory.Outcome
 	projectConfigs  map[string]issueintel.ProjectConfig
 	candidates      map[string]experience.Candidate
+	recoveries      map[string]FailedApproachRecovery
+	procedures      map[string]SuccessfulProcedureEpisode
 }
 
 // Compile selects only the three high-confidence deterministic candidate
@@ -74,6 +90,8 @@ func Compile(input Input) (Result, error) {
 		ambiguousTurns:  make(map[turnKey]bool),
 		projectConfigs:  input.ProjectConfigs,
 		candidates:      make(map[string]experience.Candidate),
+		recoveries:      make(map[string]FailedApproachRecovery),
+		procedures:      make(map[string]SuccessfulProcedureEpisode),
 	}
 	for _, turn := range input.Turns {
 		key := turnKey{sessionKey: turn.SessionKey, turnIndex: turn.TurnIndex}
@@ -133,6 +151,26 @@ func Compile(input Input) (Result, error) {
 	}
 	sort.Slice(result.Candidates, func(i, j int) bool {
 		return result.Candidates[i].CandidateID < result.Candidates[j].CandidateID
+	})
+	for _, recovery := range value.recoveries {
+		result.FailedApproachRecoveries = append(
+			result.FailedApproachRecoveries,
+			recovery,
+		)
+	}
+	sort.Slice(result.FailedApproachRecoveries, func(i, j int) bool {
+		return result.FailedApproachRecoveries[i].CandidateID <
+			result.FailedApproachRecoveries[j].CandidateID
+	})
+	for _, episode := range value.procedures {
+		result.SuccessfulProcedureEpisodes = append(
+			result.SuccessfulProcedureEpisodes,
+			episode,
+		)
+	}
+	sort.Slice(result.SuccessfulProcedureEpisodes, func(i, j int) bool {
+		return result.SuccessfulProcedureEpisodes[i].CandidateID <
+			result.SuccessfulProcedureEpisodes[j].CandidateID
 	})
 	return result, nil
 }
@@ -308,6 +346,8 @@ func (value *compiler) compileSuccessfulProcedures() error {
 		if err != nil {
 			return fmt.Errorf("compile successful-procedure candidate: %w", err)
 		}
+		episode.CandidateID = candidate.CandidateID
+		value.procedures[candidate.CandidateID] = episode
 		value.candidates[candidate.CandidateID] = candidate
 	}
 	return nil
@@ -547,6 +587,17 @@ func (value *compiler) compileFailedApproaches() error {
 				return fmt.Errorf("compile failed-approach candidate: %w", err)
 			}
 			value.candidates[candidate.CandidateID] = candidate
+			value.recoveries[candidate.CandidateID] = FailedApproachRecovery{
+				CandidateID:     candidate.CandidateID,
+				ProjectIdentity: value.projectIdentity,
+				SessionKey:      repair.SessionKey,
+				FailureCall:     failureCall,
+				FailureResult:   failureResult,
+				SuccessCall:     successCall,
+				SuccessResult:   successResult,
+				OutcomeRefs:     append([]string(nil), outcomeRefs...),
+				OccurredAt:      candidate.CreatedAt,
+			}
 		}
 	}
 	return nil

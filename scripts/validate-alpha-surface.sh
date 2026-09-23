@@ -2,8 +2,8 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-readonly ALPHA_VERSION="0.0.1-alpha.8"
-readonly NUMBAT_COMMIT="f0778c09dc48281aa93a3887d05096c0a1f3f9f7"
+readonly ALPHA_VERSION="0.0.1-alpha.11"
+readonly NUMBAT_COMMIT="b5172bb8bb8f1d68edc4f3b9462de7e248dc5243"
 
 die() {
   printf 'validate-alpha-surface: %s\n' "$*" >&2
@@ -38,9 +38,13 @@ for path in \
   docs/launch/developer-preview.md \
   docs/launch/clean-machine-alpha-qa.md \
   docs/launch/local-v0-requirements.md \
+  docs/launch/windows-port.md \
+  docs/launch/windows-clean-machine-alpha-qa.md \
   scripts/install.sh \
+  scripts/install.ps1 \
   scripts/notarize-release.sh \
   scripts/render-homebrew-formula.sh \
+  scripts/smoke-windows-preview.ps1 \
   .github/workflows/signed-alpha-release.yml; do
   require_file "${repository_root}/${path}"
 done
@@ -71,6 +75,24 @@ require_text "${repository_root}/docs/launch/developer-preview.md" "Codex"
 require_text "${repository_root}/docs/launch/developer-preview.md" "Claude Code"
 require_text "${repository_root}/docs/launch/developer-preview.md" "Belay Teams is not included"
 require_text "${repository_root}/docs/launch/local-v0-requirements.md" "licensed under MIT"
+for path in \
+  README.md \
+  docs/launch/developer-preview.md; do
+  require_text "${repository_root}/${path}" "Windows"
+  require_text "${repository_root}/${path}" "SmartScreen"
+done
+for path in \
+  README.md \
+  llms.txt \
+  .github/workflows/developer-preview.yml; do
+  require_text "${repository_root}/${path}" "install.ps1"
+done
+require_text "${repository_root}/.github/workflows/developer-preview.yml" \
+  "windows-amd64.zip"
+require_text "${repository_root}/Makefile" "--os windows"
+require_text "${repository_root}/scripts/build-developer-preview.sh" "windows"
+require_text "${repository_root}/SECURITY.md" "DPAPI"
+require_text "${repository_root}/docs/storage/local-storage-lifecycle.md" "DPAPI"
 require_text "${repository_root}/README.md" "stable ingestion snapshot"
 require_text "${repository_root}/docs/launch/developer-preview.md" "stable ingestion snapshot"
 require_text "${repository_root}/docs/launch/local-v0-requirements.md" "next_cursor"
@@ -147,6 +169,30 @@ for path in \
     record_fix_applied; do
     require_text "${repository_root}/${path}" "${tool}"
   done
+done
+for path in \
+  README.md \
+  llms.txt \
+  docs/launch/developer-preview.md \
+  docs/contracts/mcp-v1.md; do
+  require_text "${repository_root}/${path}" "Cursor"
+done
+for path in \
+  README.md \
+  docs/contracts/mcp-v1.md; do
+  require_text "${repository_root}/${path}" "~/.cursor/mcp.json"
+done
+for path in \
+  README.md \
+  llms.txt \
+  docs/launch/developer-preview.md \
+  docs/contracts/mcp-v1.md; do
+  require_text "${repository_root}/${path}" "Antigravity"
+done
+for path in \
+  README.md \
+  docs/contracts/mcp-v1.md; do
+  require_text "${repository_root}/${path}" "~/.gemini/config/mcp_config.json"
 done
 require_text "${repository_root}/README.md" "foreign or unverifiable"
 require_text "${repository_root}/docs/launch/developer-preview.md" \
@@ -261,6 +307,40 @@ if grep -Eiq \
   "${repository_root}/docs/launch/clean-machine-alpha-qa.md" \
   "${repository_root}/docs/launch/local-v0-requirements.md"; then
   die "release documentation incorrectly allows Codex registration migration"
+fi
+
+if grep -Eiq \
+  'windows[^.]*(out of scope|outside the alpha)' \
+  "${repository_root}/README.md" \
+  "${repository_root}/SUPPORT.md" \
+  "${repository_root}/SECURITY.md" \
+  "${repository_root}/llms.txt" \
+  "${repository_root}/docs/launch/developer-preview.md"; then
+  die "release documentation still excludes Windows from the supported alpha"
+fi
+
+# Semantic analysis may now run through the Cursor CLI and the Antigravity CLI,
+# but neither CLI was installed on the development machine, so the release
+# surface must keep saying that the path was not validated against a real run.
+for path in \
+  README.md \
+  docs/launch/developer-preview.md; do
+  require_text "${repository_root}/${path}" "not validated against a real"
+done
+
+if grep -Eiq \
+  'antigravity transcript reader (is|was|has been|remains) (built|validated|implemented|available|shipped|included)|(built|validated|implemented|ships|shipped|includes|added) (an|the|its) antigravity transcript reader|antigravity (history|historical) scan (is|was|has been) (validated|implemented|run)' \
+  "${repository_root}/README.md" \
+  "${repository_root}/SUPPORT.md" \
+  "${repository_root}/SECURITY.md" \
+  "${repository_root}/llms.txt" \
+  "${repository_root}/docs/contracts/mcp-v1.md" \
+  "${repository_root}/docs/contracts/telemetry-v1.md" \
+  "${repository_root}/docs/launch/developer-preview.md" \
+  "${repository_root}/docs/launch/windows-port.md" \
+  "${repository_root}/docs/launch/clean-machine-alpha-qa.md" \
+  "${repository_root}/docs/launch/windows-clean-machine-alpha-qa.md"; then
+  die "release documentation claims an Antigravity transcript reader or historical scan exists"
 fi
 
 if grep -Fq 'if: runner.arch' \

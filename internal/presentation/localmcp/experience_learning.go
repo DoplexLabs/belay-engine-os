@@ -3,7 +3,6 @@ package localmcp
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -481,7 +480,7 @@ func (s *Server) listExperienceProposals(
 	input.CWD = strings.TrimSpace(input.CWD)
 	if input.CWD == "" ||
 		len(input.CWD) > maxExperienceLearningCWDBytes ||
-		!filepath.IsAbs(input.CWD) ||
+		!absoluteInputPath(input.CWD) ||
 		!input.Harness.Valid() {
 		return listExperienceProposalsOutput{},
 			newStrictToolFailure(strictInvalidInput)
@@ -497,7 +496,7 @@ func (s *Server) listExperienceProposals(
 	}
 	result, err := s.experienceLearning.List(
 		ctx,
-		filepath.Clean(input.CWD),
+		cleanInputPath(input.CWD),
 		input.Harness,
 		limit,
 		input.IncludeDeferred,
@@ -537,7 +536,7 @@ func (s *Server) listActiveExperiences(
 	input.CWD = strings.TrimSpace(input.CWD)
 	if input.CWD == "" ||
 		len(input.CWD) > maxExperienceLearningCWDBytes ||
-		!filepath.IsAbs(input.CWD) {
+		!absoluteInputPath(input.CWD) {
 		return listActiveExperiencesOutput{},
 			newStrictToolFailure(strictInvalidInput)
 	}
@@ -552,7 +551,7 @@ func (s *Server) listActiveExperiences(
 	}
 	result, err := s.experienceLearning.ListActive(
 		ctx,
-		filepath.Clean(input.CWD),
+		cleanInputPath(input.CWD),
 		limit,
 	)
 	if err != nil {

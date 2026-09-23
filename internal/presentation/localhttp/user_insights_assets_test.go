@@ -64,6 +64,11 @@ func TestHabitsBrowserContractReadsOnlyItsOwnRoute(t *testing.T) {
 		`await apiGet("/v1/user-insights")`,
 		`"belay.user-insights.v1"`,
 		`.slice(0, 25)`,
+		`renderDeterministicHabits(session, key, true)`,
+		`renderDeterministicHabits(session, key, false)`,
+		`"Available immediately from local evidence"`,
+		`Add an AI-written debrief with ${habitsHarnessLabel(harness.name)}`,
+		`"Open session evidence"`,
 		`debrief.insights.filter(isRecord).slice(0, 5)`,
 		`if (state.activeView === "habits") {`,
 		`/debrief?generate=1`,
@@ -86,7 +91,6 @@ func TestHabitsBrowserContractReadsOnlyItsOwnRoute(t *testing.T) {
 		`not active work time or guaranteed savings.`,
 		`session.debrief_status === "stale"`,
 		`"Outcome not reported"`,
-		`Install Claude Code or Codex on this machine`,
 	} {
 		if !strings.Contains(app, required) {
 			t.Errorf("Habits browser contract is missing %q", required)
@@ -109,7 +113,6 @@ func TestHabitsBrowserContractReadsOnlyItsOwnRoute(t *testing.T) {
 		"loadCostIssues(",
 		"refreshAttention(",
 		"refreshSessions(",
-		"openSession(",
 		"innerHTML",
 	} {
 		if strings.Contains(habits, forbidden) {
@@ -119,6 +122,7 @@ func TestHabitsBrowserContractReadsOnlyItsOwnRoute(t *testing.T) {
 	for _, required := range []string{
 		".habits-rail-item {",
 		".habits-insight {",
+		".habits-deterministic-card {",
 		".habits-quote {",
 		".habits-phase-bar {",
 		".habits-marker {",

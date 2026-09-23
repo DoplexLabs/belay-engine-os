@@ -4,9 +4,10 @@
 package numbat
 
 const (
-	SchemaVersion  = "0.3.0"
-	AdapterVersion = "numbat-0.3.0/v1"
-	ResearchCommit = "f0778c09dc48281aa93a3887d05096c0a1f3f9f7"
+	SchemaVersion     = "0.3.0"
+	SchemaVersionNext = "0.4.0"
+	AdapterVersion    = "numbat-0.3.0+0.4.0/v2"
+	ResearchCommit    = "b5172bb8bb8f1d68edc4f3b9462de7e248dc5243"
 )
 
 type Endpoint struct {
@@ -28,19 +29,21 @@ type Evidence struct {
 }
 
 type EventRecord struct {
-	SchemaVersion string   `json:"schema_version"`
-	RecordType    string   `json:"record_type"`
-	RunID         string   `json:"run_id"`
-	Endpoint      Endpoint `json:"endpoint"`
-	CaseID        string   `json:"case_id,omitempty"`
-	EventID       string   `json:"event_id"`
-	SourceAgent   string   `json:"source_agent"`
-	SourceType    string   `json:"source_type"`
-	Timestamp     string   `json:"timestamp,omitempty"`
-	ProjectPath   string   `json:"project_path,omitempty"`
-	SessionID     string   `json:"session_id,omitempty"`
-	Actor         string   `json:"actor,omitempty"`
-	EventType     string   `json:"event_type"`
+	SchemaVersion   string   `json:"schema_version"`
+	RecordType      string   `json:"record_type"`
+	RunID           string   `json:"run_id"`
+	Endpoint        Endpoint `json:"endpoint"`
+	CaseID          string   `json:"case_id,omitempty"`
+	EventID         string   `json:"event_id"`
+	SourceAgent     string   `json:"source_agent"`
+	SourceType      string   `json:"source_type"`
+	Timestamp       string   `json:"timestamp,omitempty"`
+	ProjectPath     string   `json:"project_path,omitempty"`
+	SessionID       string   `json:"session_id,omitempty"`
+	SessionTreeID   string   `json:"session_tree_id,omitempty"`
+	ParentSessionID string   `json:"parent_session_id,omitempty"`
+	Actor           string   `json:"actor,omitempty"`
+	EventType       string   `json:"event_type"`
 
 	ToolName         string `json:"tool_name,omitempty"`
 	Command          string `json:"command,omitempty"`
@@ -63,6 +66,7 @@ type EventRecord struct {
 	Entrypoint       string `json:"entrypoint,omitempty"`
 	CLIVersion       string `json:"cli_version,omitempty"`
 	SubAgent         string `json:"sub_agent,omitempty"`
+	SubAgentID       string `json:"sub_agent_id,omitempty"`
 
 	ContentPreview          string   `json:"content_preview,omitempty"`
 	ContentPreviewTruncated bool     `json:"content_preview_truncated,omitempty"`
@@ -72,6 +76,25 @@ type EventRecord struct {
 	Tags                    []string `json:"tags,omitempty"`
 	Confidence              string   `json:"confidence"`
 	Evidence                Evidence `json:"evidence"`
+}
+
+type SessionIdentity struct {
+	Namespace string `json:"namespace"`
+	SessionID string `json:"session_id"`
+}
+
+type SessionLinkRecord struct {
+	SchemaVersion string          `json:"schema_version"`
+	RecordType    string          `json:"record_type"`
+	RunID         string          `json:"run_id"`
+	Endpoint      Endpoint        `json:"endpoint"`
+	LinkID        string          `json:"link_id"`
+	SourceAgent   string          `json:"source_agent"`
+	Left          SessionIdentity `json:"left"`
+	Right         SessionIdentity `json:"right"`
+	Relationship  string          `json:"relationship"`
+	Confidence    string          `json:"confidence"`
+	SourceRefs    []string        `json:"source_refs"`
 }
 
 type FindingRecord struct {
@@ -90,9 +113,12 @@ type FindingRecord struct {
 	SourceType      string   `json:"source_type"`
 	ProjectPathHash string   `json:"project_path_hash,omitempty"`
 	SessionID       string   `json:"session_id,omitempty"`
+	SessionTreeID   string   `json:"session_tree_id,omitempty"`
+	ParentSessionID string   `json:"parent_session_id,omitempty"`
 	Model           string   `json:"model,omitempty"`
 	ModelProvider   string   `json:"model_provider,omitempty"`
 	SubAgent        string   `json:"sub_agent,omitempty"`
+	SubAgentID      string   `json:"sub_agent_id,omitempty"`
 	Title           string   `json:"title"`
 
 	ObservedEventType               string     `json:"observed_event_type,omitempty"`
@@ -112,20 +138,21 @@ type FindingRecord struct {
 }
 
 type ScanSummaryRecord struct {
-	SchemaVersion     string   `json:"schema_version"`
-	RecordType        string   `json:"record_type"`
-	RunID             string   `json:"run_id"`
-	Endpoint          Endpoint `json:"endpoint"`
-	Status            string   `json:"status"`
-	ArtifactsScanned  int      `json:"artifacts_scanned"`
-	EventsEmitted     int      `json:"events_emitted"`
-	FindingsEmitted   int      `json:"findings_emitted"`
-	IndicatorsEmitted int      `json:"indicators_emitted"`
-	Diagnostics       int      `json:"diagnostics"`
-	HTTPBatchesSent   *int     `json:"http_batches_sent,omitempty"`
-	HTTPRecordsSent   *int     `json:"http_records_sent,omitempty"`
-	HTTPLastStatus    *int     `json:"http_last_status,omitempty"`
-	HTTPFailed        *bool    `json:"http_failed,omitempty"`
+	SchemaVersion       string   `json:"schema_version"`
+	RecordType          string   `json:"record_type"`
+	RunID               string   `json:"run_id"`
+	Endpoint            Endpoint `json:"endpoint"`
+	Status              string   `json:"status"`
+	ArtifactsScanned    int      `json:"artifacts_scanned"`
+	EventsEmitted       int      `json:"events_emitted"`
+	SessionLinksEmitted int      `json:"session_links_emitted"`
+	FindingsEmitted     int      `json:"findings_emitted"`
+	IndicatorsEmitted   int      `json:"indicators_emitted"`
+	Diagnostics         int      `json:"diagnostics"`
+	HTTPBatchesSent     *int     `json:"http_batches_sent,omitempty"`
+	HTTPRecordsSent     *int     `json:"http_records_sent,omitempty"`
+	HTTPLastStatus      *int     `json:"http_last_status,omitempty"`
+	HTTPFailed          *bool    `json:"http_failed,omitempty"`
 }
 
 type DiagnosticRecord struct {
@@ -168,9 +195,12 @@ type EnforcementRecord struct {
 	SourceAgent     string   `json:"source_agent"`
 	SourceType      string   `json:"source_type"`
 	SessionID       string   `json:"session_id,omitempty"`
+	SessionTreeID   string   `json:"session_tree_id,omitempty"`
+	ParentSessionID string   `json:"parent_session_id,omitempty"`
 	Model           string   `json:"model,omitempty"`
 	ModelProvider   string   `json:"model_provider,omitempty"`
 	SubAgent        string   `json:"sub_agent,omitempty"`
+	SubAgentID      string   `json:"sub_agent_id,omitempty"`
 	ToolName        string   `json:"tool_name,omitempty"`
 	ToolCallID      string   `json:"tool_call_id,omitempty"`
 	ActionEventIDs  []string `json:"action_event_ids"`

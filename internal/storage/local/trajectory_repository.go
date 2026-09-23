@@ -476,11 +476,26 @@ func (s *Store) compareExistingPayloadTx(
 	want []byte,
 	conflict error,
 ) error {
-	allowed := map[string]string{
-		"trajectory_edges":     "edge_id",
-		"outcome_observations": "outcome_id",
+	type comparisonTarget struct {
+		idColumn string
+		maxBytes int
 	}
-	if allowed[table] != idColumn {
+	allowed := map[string]comparisonTarget{
+		"trajectory_edges": {
+			idColumn: "edge_id",
+			maxBytes: maxTrajectoryPayloadBytes,
+		},
+		"outcome_observations": {
+			idColumn: "outcome_id",
+			maxBytes: maxTrajectoryPayloadBytes,
+		},
+		"evidence_episodes": {
+			idColumn: "episode_id",
+			maxBytes: maxEvidenceEpisodePayloadBytes,
+		},
+	}
+	target, ok := allowed[table]
+	if !ok || target.idColumn != idColumn {
 		return errors.New("unsupported domain payload comparison")
 	}
 	var payload []byte
@@ -489,7 +504,7 @@ func (s *Store) compareExistingPayloadTx(
 	if err := tx.QueryRowContext(ctx, query, id).Scan(&payload, &encoding); err != nil {
 		return errors.New("read duplicate domain payload")
 	}
-	if err := validateSealedPayloadSize(recordType, payload, maxTrajectoryPayloadBytes); err != nil {
+	if err := validateSealedPayloadSize(recordType, payload, target.maxBytes); err != nil {
 		return err
 	}
 	payload, err := s.cipher.open(recordType, recordID, "payload", encoding, payload)

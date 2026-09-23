@@ -15,7 +15,29 @@ type Agent uint8
 const (
 	AgentCodex Agent = iota + 1
 	AgentClaude
+	AgentCursor
+	AgentAntigravity
 )
+
+// SupportedAgents lists every harness Belay can launch Numbat for, in the
+// order Belay reports them.
+func SupportedAgents() []Agent {
+	return []Agent{AgentCodex, AgentClaude, AgentCursor, AgentAntigravity}
+}
+
+// HistoricalScanSupported reports whether the pinned Numbat can scan the
+// harness's at-rest artifacts. Antigravity is hook-only in the pinned
+// coverage matrix: its conversations are stored encrypted and Numbat rejects
+// `scan --agent antigravity`, so Belay never launches a historical scan for it
+// and takes live hook evidence only.
+func (a Agent) HistoricalScanSupported() bool {
+	switch a {
+	case AgentCodex, AgentClaude, AgentCursor:
+		return true
+	default:
+		return false
+	}
+}
 
 func (a Agent) String() string {
 	switch a {
@@ -23,6 +45,10 @@ func (a Agent) String() string {
 		return "codex"
 	case AgentClaude:
 		return "claude"
+	case AgentCursor:
+		return "cursor"
+	case AgentAntigravity:
+		return "antigravity"
 	default:
 		return ""
 	}
@@ -42,6 +68,10 @@ func parseAgent(value string) (Agent, bool) {
 		return AgentCodex, true
 	case AgentClaude.String(), "claude code", "claude-code":
 		return AgentClaude, true
+	case AgentCursor.String():
+		return AgentCursor, true
+	case AgentAntigravity.String():
+		return AgentAntigravity, true
 	default:
 		return 0, false
 	}
@@ -71,6 +101,9 @@ func (c *Client) StartHistoricalScan(ctx context.Context, agent Agent) (*Histori
 	agentName, err := validateAgent(agent)
 	if err != nil {
 		return nil, err
+	}
+	if !agent.HistoricalScanSupported() {
+		return nil, errors.New("Numbat has no at-rest scan for this agent")
 	}
 	command := c.command(ctx,
 		"scan",

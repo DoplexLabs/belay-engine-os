@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/DoplexLabs/belay-engine/internal/canonical/model"
+	"github.com/DoplexLabs/belay-engine/internal/evidenceepisode"
 )
 
 const (
@@ -48,10 +49,11 @@ type SessionDiagnosis struct {
 }
 
 type SessionDetailWithDiagnosis struct {
-	SchemaVersion string               `json:"schema_version"`
-	Data          model.SessionSummary `json:"data"`
-	Diagnosis     SessionDiagnosis     `json:"diagnosis"`
-	DataThrough   time.Time            `json:"data_through"`
+	SchemaVersion string                    `json:"schema_version"`
+	Data          model.SessionSummary      `json:"data"`
+	Episodes      []evidenceepisode.Episode `json:"episodes"`
+	Diagnosis     SessionDiagnosis          `json:"diagnosis"`
+	DataThrough   time.Time                 `json:"data_through"`
 }
 
 func (s *Service) DiagnoseSession(ctx context.Context, detail SessionDetail) SessionDiagnosis {

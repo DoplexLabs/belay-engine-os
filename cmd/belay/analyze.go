@@ -66,7 +66,8 @@ func runAnalyze(
 	agent := flags.String(
 		"agent",
 		"auto",
-		"installed harness to use: auto, claude, or codex",
+		"installed harness that runs the analysis: auto, claude, codex, cursor, "+
+			"or antigravity (it refines every harness's sessions alike)",
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -139,6 +140,44 @@ func runSemanticProjectAnalyses(
 	return report, errors.Join(legacyErr, experienceErr, habitErr)
 }
 
+// errNoSemanticHarness is returned when --agent auto finds no installed
+// harness that can run Belay's semantic analysis.
+var errNoSemanticHarness = errors.New(
+	"no Claude Code, Codex, Cursor CLI, or Antigravity CLI harness detected",
+)
+
+// semanticHarnessCandidate is one harness selectSemanticHarness may pick.
+// inventoryAgent, when non-zero, gates the harness on the Numbat inventory
+// (the IDE or CLI row must be present or detected). Cursor and Antigravity
+// leave it zero: their CLIs install independently of the IDE, so only
+// direct detection decides whether they can run analysis.
+type semanticHarnessCandidate struct {
+	inventoryAgent numbat.Agent
+	harness        localapp.SemanticHarness
+	displayName    string
+}
+
+var (
+	semanticCandidateClaude = semanticHarnessCandidate{
+		inventoryAgent: numbat.AgentClaude,
+		harness:        localapp.SemanticHarnessClaude,
+		displayName:    "Claude Code",
+	}
+	semanticCandidateCodex = semanticHarnessCandidate{
+		inventoryAgent: numbat.AgentCodex,
+		harness:        localapp.SemanticHarnessCodex,
+		displayName:    "Codex",
+	}
+	semanticCandidateCursor = semanticHarnessCandidate{
+		harness:     localapp.SemanticHarnessCursor,
+		displayName: "Cursor CLI",
+	}
+	semanticCandidateAntigravity = semanticHarnessCandidate{
+		harness:     localapp.SemanticHarnessAntigravity,
+		displayName: "Antigravity CLI",
+	}
+)
+
 func selectSemanticHarness(
 	inventory numbat.Inventory,
 	preferred string,
@@ -147,36 +186,34 @@ func selectSemanticHarness(
 	if preferred == "" {
 		preferred = "auto"
 	}
-	var candidates []struct {
-		agent   numbat.Agent
-		harness localapp.SemanticHarness
-	}
+	var candidates []semanticHarnessCandidate
 	switch preferred {
 	case "auto":
-		candidates = []struct {
-			agent   numbat.Agent
-			harness localapp.SemanticHarness
-		}{
-			{numbat.AgentClaude, localapp.SemanticHarnessClaude},
-			{numbat.AgentCodex, localapp.SemanticHarnessCodex},
+		candidates = []semanticHarnessCandidate{
+			semanticCandidateClaude,
+			semanticCandidateCodex,
+			semanticCandidateCursor,
+			semanticCandidateAntigravity,
 		}
 	case "claude", "claude-code":
-		candidates = append(candidates, struct {
-			agent   numbat.Agent
-			harness localapp.SemanticHarness
-		}{numbat.AgentClaude, localapp.SemanticHarnessClaude})
+		candidates = []semanticHarnessCandidate{semanticCandidateClaude}
 	case "codex":
-		candidates = append(candidates, struct {
-			agent   numbat.Agent
-			harness localapp.SemanticHarness
-		}{numbat.AgentCodex, localapp.SemanticHarnessCodex})
+		candidates = []semanticHarnessCandidate{semanticCandidateCodex}
+	case "cursor", "cursor-agent":
+		candidates = []semanticHarnessCandidate{semanticCandidateCursor}
+	case "antigravity", "agy":
+		candidates = []semanticHarnessCandidate{semanticCandidateAntigravity}
 	default:
-		return "", errors.New("--agent must be auto, claude, or codex")
+		return "", errors.New(
+			"--agent must be auto, claude, codex, cursor, or antigravity",
+		)
 	}
 	for _, candidate := range candidates {
-		row, ok := inventory.LaunchTargets[candidate.agent]
-		if !ok || (!row.Present && !row.Detected) {
-			continue
+		if candidate.inventoryAgent != 0 {
+			row, ok := inventory.LaunchTargets[candidate.inventoryAgent]
+			if !ok || (!row.Present && !row.Detected) {
+				continue
+			}
 		}
 		if installed, ok := localapp.InstalledSemanticHarness(
 			string(candidate.harness),
@@ -185,19 +222,23 @@ func selectSemanticHarness(
 		}
 	}
 	if preferred == "auto" {
-		return "", errors.New(
-			"no Claude Code or Codex harness detected by belay agents",
-		)
+		return "", fmt.Errorf("%w by belay agents", errNoSemanticHarness)
 	}
 	return "", fmt.Errorf(
 		"%s was not detected by belay agents",
-		preferred,
+		candidates[0].displayName,
 	)
 }
 
 func semanticHarnessDisplayName(harness localapp.SemanticHarness) string {
-	if harness == localapp.SemanticHarnessClaude {
+	switch harness {
+	case localapp.SemanticHarnessClaude:
 		return "Claude Code"
+	case localapp.SemanticHarnessCursor:
+		return "Cursor Agent"
+	case localapp.SemanticHarnessAntigravity:
+		return "Antigravity"
+	default:
+		return "Codex"
 	}
-	return "Codex"
 }

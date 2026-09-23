@@ -164,10 +164,13 @@ func ListExperienceCandidateReviews(
 			"experience candidate review list request is invalid",
 		)
 	}
-	proposals, err := store.QueryPendingCurrentExperienceSemanticProposals(
+	engines := reviewProvenanceHarnesses(harness)
+	proposals, err := queryPendingReviewProposals(
 		ctx,
+		store,
 		projectIdentity,
 		harness,
+		engines,
 		limit,
 		includeDeferred,
 	)
@@ -185,12 +188,115 @@ func ListExperienceCandidateReviews(
 			return nil, err
 		}
 		if review.ProjectIdentity != projectIdentity ||
-			review.SemanticProvenance.Harness != harness {
+			!selectionContains(engines, review.SemanticProvenance.Harness) {
 			return nil, ErrExperienceReviewMismatch
 		}
 		result = append(result, review)
 	}
 	return result, nil
+}
+
+// reviewProvenanceHarnesses lists the analysis engines whose pending proposals
+// the review queue for a harness may show. A semantic proposal is stamped with
+// the harness that ran Belay's semantic pass. Claude Code and Codex review
+// their own engine's proposals. Cursor and Antigravity queues read proposals
+// from every engine and keep the ones whose scope applies to that harness:
+// their CLIs can run the pass, but a Cursor or Antigravity user is most often
+// analyzed by whichever engine is installed, and would otherwise never see a
+// lesson to approve.
+func reviewProvenanceHarnesses(
+	harness experience.Harness,
+) []experience.Harness {
+	switch harness {
+	case experience.HarnessCursor, experience.HarnessAntigravity:
+		return []experience.Harness{
+			experience.HarnessClaude,
+			experience.HarnessCodex,
+			experience.HarnessCursor,
+			experience.HarnessAntigravity,
+		}
+	default:
+		return []experience.Harness{harness}
+	}
+}
+
+// queryPendingReviewProposals keeps the single-engine query untouched for a
+// harness that reviews its own proposals. For a delivery-only harness it merges
+// every engine's pending proposals, keeps those scoped to the harness, and
+// shows one proposal per candidate: the most recently generated. An empty
+// scope is harness-neutral, matching the Mission Pack compiler.
+func queryPendingReviewProposals(
+	ctx context.Context,
+	store ExperienceCandidateReviewListStore,
+	projectIdentity string,
+	harness experience.Harness,
+	engines []experience.Harness,
+	limit int,
+	includeDeferred bool,
+) ([]experience.SemanticProposal, error) {
+	if len(engines) == 1 {
+		return store.QueryPendingCurrentExperienceSemanticProposals(
+			ctx,
+			projectIdentity,
+			engines[0],
+			limit,
+			includeDeferred,
+		)
+	}
+	latest := make(map[string]experience.SemanticProposal)
+	for _, engine := range engines {
+		proposals, err := store.QueryPendingCurrentExperienceSemanticProposals(
+			ctx,
+			projectIdentity,
+			engine,
+			limit,
+			includeDeferred,
+		)
+		if err != nil {
+			return nil, err
+		}
+		for _, proposal := range proposals {
+			if !proposalScopeAppliesTo(proposal, harness) {
+				continue
+			}
+			current, seen := latest[proposal.CandidateID]
+			if !seen || proposalGeneratedAfter(proposal, current) {
+				latest[proposal.CandidateID] = proposal
+			}
+		}
+	}
+	merged := make([]experience.SemanticProposal, 0, len(latest))
+	for _, proposal := range latest {
+		merged = append(merged, proposal)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if !merged[i].Provenance.GeneratedAt.Equal(merged[j].Provenance.GeneratedAt) {
+			return merged[i].Provenance.GeneratedAt.After(merged[j].Provenance.GeneratedAt)
+		}
+		return merged[i].ProposalID < merged[j].ProposalID
+	})
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged, nil
+}
+
+func proposalScopeAppliesTo(
+	proposal experience.SemanticProposal,
+	harness experience.Harness,
+) bool {
+	scoped := proposal.Proposal.Scope.Harnesses
+	return len(scoped) == 0 || selectionContains(scoped, harness)
+}
+
+func proposalGeneratedAfter(
+	candidate experience.SemanticProposal,
+	current experience.SemanticProposal,
+) bool {
+	if candidate.Provenance.GeneratedAt.Equal(current.Provenance.GeneratedAt) {
+		return candidate.ProposalID < current.ProposalID
+	}
+	return candidate.Provenance.GeneratedAt.After(current.Provenance.GeneratedAt)
 }
 
 func reviewOutcomes(

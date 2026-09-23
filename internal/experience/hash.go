@@ -15,6 +15,7 @@ var idEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 func (value Candidate) DeterministicID() string {
 	refs := normalizedEvidenceRefs(value.Evidence.Refs)
 	outcomes := normalizedStrings(value.OutcomeRefs)
+	episodes := normalizedStrings(value.EpisodeRefs)
 	existing := append([]ExperienceRef(nil), value.ExistingRefs...)
 	sort.Slice(existing, func(i, j int) bool {
 		if existing[i].ExperienceID == existing[j].ExperienceID {
@@ -30,6 +31,7 @@ func (value Candidate) DeterministicID() string {
 		UserFeedback     string
 		Evidence         []EvidenceRef
 		OutcomeRefs      []string
+		EpisodeRefs      []string
 		ExistingRefs     []ExperienceRef
 	}{
 		SchemaVersion:    CandidateSchemaVersion,
@@ -39,6 +41,7 @@ func (value Candidate) DeterministicID() string {
 		UserFeedback:     strings.TrimSpace(value.UserFeedback),
 		Evidence:         refs,
 		OutcomeRefs:      outcomes,
+		EpisodeRefs:      episodes,
 		ExistingRefs:     existing,
 	})
 }

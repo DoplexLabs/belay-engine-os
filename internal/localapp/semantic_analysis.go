@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	InsightPromptVersion               = "belay.insight-prompt.v4"
+	InsightPromptVersion               = "belay.insight-prompt.v5"
 	maxSemanticProjects                = 100
 	maxSemanticCommandOutput           = 4 << 20
 	maxClaudeInlineSchema              = 64 << 10
@@ -45,7 +45,29 @@ type SemanticHarness string
 const (
 	SemanticHarnessClaude SemanticHarness = "claude"
 	SemanticHarnessCodex  SemanticHarness = "codex"
+	SemanticHarnessCursor SemanticHarness = "cursor"
+	// SemanticHarnessAntigravity runs the semantic pass through the
+	// Antigravity CLI (`agy`), whose headless mode binds its reply to a JSON
+	// schema. The Antigravity IDE itself has no headless mode.
+	SemanticHarnessAntigravity SemanticHarness = "antigravity"
 )
+
+// semanticHarnessLabel names a harness the way its vendor does, so prompts
+// describe the running agent accurately.
+func semanticHarnessLabel(harness SemanticHarness) string {
+	switch harness {
+	case SemanticHarnessClaude:
+		return "Claude Code"
+	case SemanticHarnessCodex:
+		return "Codex"
+	case SemanticHarnessCursor:
+		return "Cursor Agent"
+	case SemanticHarnessAntigravity:
+		return "Antigravity"
+	default:
+		return string(harness)
+	}
+}
 
 type SemanticInsightStore interface {
 	ListInsightProjects(context.Context, int) ([]issueintel.Project, error)
@@ -234,7 +256,10 @@ func semanticModelName(value string) string {
 }
 
 func (h SemanticHarness) Valid() bool {
-	return h == SemanticHarnessClaude || h == SemanticHarnessCodex
+	return h == SemanticHarnessClaude ||
+		h == SemanticHarnessCodex ||
+		h == SemanticHarnessCursor ||
+		h == SemanticHarnessAntigravity
 }
 
 func InstalledSemanticHarness(preferred string) (SemanticHarness, bool) {
@@ -245,12 +270,30 @@ func InstalledSemanticHarness(preferred string) (SemanticHarness, bool) {
 	case "codex":
 		_, err := exec.LookPath("codex")
 		return SemanticHarnessCodex, err == nil
+	case "cursor", "cursor-agent":
+		// The Cursor CLI runs in read-only ask mode and returns text, which
+		// Belay validates against its own output schema.
+		_, ok := cursorAgentPath()
+		return SemanticHarnessCursor, ok
+	case "antigravity", "agy":
+		// The Antigravity CLI, not the IDE, runs the pass; its headless mode
+		// binds the reply to Belay's output schema.
+		_, ok := antigravityCLIPath()
+		return SemanticHarnessAntigravity, ok
 	case "", "auto":
+		// Schema-enforcing harnesses first, then the CLIs whose replies Belay
+		// validates itself.
 		if _, err := exec.LookPath("claude"); err == nil {
 			return SemanticHarnessClaude, true
 		}
 		if _, err := exec.LookPath("codex"); err == nil {
 			return SemanticHarnessCodex, true
+		}
+		if _, ok := cursorAgentPath(); ok {
+			return SemanticHarnessCursor, true
+		}
+		if _, ok := antigravityCLIPath(); ok {
+			return SemanticHarnessAntigravity, true
 		}
 	}
 	return "", false
@@ -312,8 +355,11 @@ func runInstalledSemanticHarnessRaw(
 		)
 	}
 	var name string
+	var executable string
 	var args []string
 	var outputPath string
+	stdin := prompt
+	decode := decodeClaudeSemanticPayload
 	switch harness {
 	case SemanticHarnessClaude:
 		if len(schema) > maxClaudeInlineSchema {
@@ -350,18 +396,52 @@ func runInstalledSemanticHarnessRaw(
 			outputPath,
 			"-",
 		}
+	case SemanticHarnessCursor:
+		name = "Cursor CLI"
+		path, ok := cursorAgentPath()
+		if !ok {
+			return semanticRawHarnessResult{}, errors.New(
+				"Cursor CLI harness is not installed",
+			)
+		}
+		executable = path
+		args = cursorSemanticArgs(tempDir)
+		decode = func(body []byte) (semanticRawHarnessResult, error) {
+			return decodeCursorSemanticPayload(body, schema)
+		}
+	case SemanticHarnessAntigravity:
+		name = "Antigravity CLI"
+		path, ok := antigravityCLIPath()
+		if !ok {
+			return semanticRawHarnessResult{}, errors.New(
+				"Antigravity CLI harness is not installed",
+			)
+		}
+		executable = path
+		args = antigravitySemanticArgs(schemaPath)
+		framed, err := antigravityStreamJSONPrompt(prompt)
+		if err != nil {
+			return semanticRawHarnessResult{}, err
+		}
+		stdin = framed
+		decode = func(body []byte) (semanticRawHarnessResult, error) {
+			return decodeAntigravitySemanticPayload(body, schema)
+		}
 	}
-	executable, err := exec.LookPath(name)
-	if err != nil {
-		return semanticRawHarnessResult{}, fmt.Errorf(
-			"%s harness is not installed",
-			name,
-		)
+	if executable == "" {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			return semanticRawHarnessResult{}, fmt.Errorf(
+				"%s harness is not installed",
+				name,
+			)
+		}
+		executable = path
 	}
 	command := exec.CommandContext(runCtx, executable, args...)
 	configureSemanticHarnessCommand(command)
 	command.Dir = tempDir
-	command.Stdin = bytes.NewReader(prompt)
+	command.Stdin = bytes.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &boundedWriter{
 		writer: &stdout,
@@ -388,7 +468,7 @@ func runInstalledSemanticHarnessRaw(
 		}
 		return semanticRawHarnessResult{body: body}, nil
 	}
-	return decodeClaudeSemanticPayload(stdout.Bytes())
+	return decode(stdout.Bytes())
 }
 
 func semanticHarnessFailure(
@@ -798,11 +878,13 @@ func semanticPromptFromBounded(
 			"durable rule. You may omit issues whose evidence does not support " +
 			"such a rule. Never invent a rule merely to cover every issue. " +
 			"Each returned fix rule must be concise and single-line. " +
-			"For durable project rules in this " + string(harness) +
+			"For durable project rules in this " +
+			semanticHarnessLabel(harness) +
 			" analysis, prefer " + preferredTarget + ". " +
 			"Use another approved target only when the evidence clearly requires it. " +
 			"Approved targets are CLAUDE.md, AGENTS.md, .claude/settings.json, " +
-			"and .codex/rules/default.rules. Use each issue ID and correction " +
+			".codex/rules/default.rules, and .agents/rules/belay.md. Use each " +
+			"issue ID and correction " +
 			"candidate ID at most once across the entire response. Return only " +
 			"schema-valid JSON.\n\n",
 	)
@@ -818,10 +900,18 @@ func semanticPromptFromBounded(
 }
 
 func semanticPreferredTarget(harness SemanticHarness) string {
-	if harness == SemanticHarnessCodex {
+	// Codex and Cursor both read AGENTS.md at the project root; Cursor has
+	// no CLAUDE.md. Antigravity reads project rules only from
+	// .agents/rules/*.md, so an Antigravity CLI analysis prefers Belay's own
+	// rule file there; Mission Packs adapt it for the other harnesses.
+	switch harness {
+	case SemanticHarnessCodex, SemanticHarnessCursor:
 		return "AGENTS.md"
+	case SemanticHarnessAntigravity:
+		return antigravityProjectRuleFile
+	default:
+		return "CLAUDE.md"
 	}
-	return "CLAUDE.md"
 }
 
 func semanticOutputSchema(
@@ -937,6 +1027,7 @@ func insightTargetSchema() map[string]any {
 			"AGENTS.md",
 			".claude/settings.json",
 			".codex/rules/default.rules",
+			antigravityProjectRuleFile,
 		},
 	}
 }
@@ -1157,7 +1248,7 @@ func validInsightLine(value string, maximum int) bool {
 func validInsightTarget(value string) bool {
 	switch strings.TrimSpace(value) {
 	case "CLAUDE.md", "AGENTS.md", ".claude/settings.json",
-		".codex/rules/default.rules":
+		".codex/rules/default.rules", antigravityProjectRuleFile:
 		return true
 	default:
 		return false

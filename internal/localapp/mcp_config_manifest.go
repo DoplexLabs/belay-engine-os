@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"time"
 )
@@ -47,7 +48,7 @@ func loadMCPManifest(path, expectedInstallationID string) (mcpOwnershipManifest,
 	}
 	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || !privateFilePermissions(runtime.GOOS, info) {
 		return mcpOwnershipManifest{}, manifestInvalid
 	}
 	parent, err := os.Lstat(filepath.Dir(path))
@@ -72,11 +73,11 @@ func validMCPManifest(manifest mcpOwnershipManifest, expectedInstallationID stri
 	if manifest.Version != mcpManifestVersion ||
 		!validInstallationID(manifest.InstallationID) ||
 		(expectedInstallationID != "" && manifest.InstallationID != expectedInstallationID) ||
-		len(manifest.Targets) > 2 {
+		len(manifest.Targets) > 4 {
 		return false
 	}
 	for agent, target := range manifest.Targets {
-		if agent != "codex" && agent != "claude" {
+		if agent != "codex" && agent != "claude" && agent != "cursor" && agent != "antigravity" {
 			return false
 		}
 		if target.Scope != "user" || !validManifestIdentity(target) {

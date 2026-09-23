@@ -163,6 +163,21 @@ func TestTranscriptProjectLabelUsesBasenameAndHarnessFallback(t *testing.T) {
 			session: transcript.Session{Agent: "claude-code"},
 			want:    "Claude Code",
 		},
+		{
+			name:    "codex harness fallback",
+			session: transcript.Session{Agent: "codex"},
+			want:    "Codex",
+		},
+		{
+			name:    "cursor harness fallback",
+			session: transcript.Session{Agent: "cursor"},
+			want:    "Cursor",
+		},
+		{
+			name:    "antigravity harness fallback",
+			session: transcript.Session{Agent: "antigravity"},
+			want:    "Antigravity",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

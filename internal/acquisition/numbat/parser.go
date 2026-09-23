@@ -39,7 +39,7 @@ func ParseLine(line []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if schema != SchemaVersion {
+	if schema != SchemaVersion && schema != SchemaVersionNext {
 		return nil, issue(IssueUnsupportedSchema, "unsupported schema_version")
 	}
 	recordType, err := requiredString(raw, "record_type")
@@ -63,6 +63,15 @@ func ParseLine(line []byte) (any, error) {
 			return nil, err
 		}
 		if err := validateFinding(record); err != nil {
+			return nil, err
+		}
+		return record, nil
+	case "session_link":
+		var record SessionLinkRecord
+		if err := strictDecode(line, &record); err != nil {
+			return nil, err
+		}
+		if err := validateSessionLink(record); err != nil {
 			return nil, err
 		}
 		return record, nil
@@ -112,7 +121,7 @@ func strictDecode(line []byte, target any) error {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		if strings.Contains(err.Error(), "unknown field") {
-			return issue(IssueUnknownField, "record contains a field outside the 0.3.0 contract")
+			return issue(IssueUnknownField, "record contains a field outside the supported contract")
 		}
 		return issue(IssueInvalidRecord, "record does not match its declared type")
 	}
@@ -204,6 +213,38 @@ func validateFinding(record FindingRecord) error {
 	return nil
 }
 
+func validateSessionLink(record SessionLinkRecord) error {
+	if err := validateEnvelope(
+		record.SchemaVersion,
+		record.RecordType,
+		record.RunID,
+		record.Endpoint,
+	); err != nil {
+		return err
+	}
+	if record.SchemaVersion != SchemaVersionNext ||
+		record.RecordType != "session_link" ||
+		!sessionLinkID.MatchString(record.LinkID) ||
+		!validAgents[record.SourceAgent] ||
+		record.Left.Namespace == "" ||
+		record.Left.SessionID == "" ||
+		record.Right.Namespace == "" ||
+		record.Right.SessionID == "" ||
+		record.Left == record.Right ||
+		record.Confidence != "high" ||
+		len(record.SourceRefs) == 0 ||
+		duplicates(record.SourceRefs) {
+		return issue(IssueInvalidRecord, "invalid session link")
+	}
+	if !slices.Contains(
+		[]string{"hook_artifact_alias", "rotated_artifact", "parent_subagent"},
+		record.Relationship,
+	) {
+		return issue(IssueInvalidRecord, "invalid session link relationship")
+	}
+	return nil
+}
+
 func validateSummary(record ScanSummaryRecord) error {
 	if err := validateEnvelope(record.SchemaVersion, record.RecordType, record.RunID, record.Endpoint); err != nil {
 		return err
@@ -212,7 +253,8 @@ func validateSummary(record ScanSummaryRecord) error {
 		!slices.Contains([]string{"complete", "partial", "error"}, record.Status) {
 		return issue(IssueInvalidRecord, "invalid scan summary")
 	}
-	if record.ArtifactsScanned < 0 || record.EventsEmitted < 0 || record.FindingsEmitted < 0 ||
+	if record.ArtifactsScanned < 0 || record.EventsEmitted < 0 || record.SessionLinksEmitted < 0 ||
+		record.FindingsEmitted < 0 ||
 		record.IndicatorsEmitted < 0 || record.Diagnostics < 0 {
 		return issue(IssueInvalidRecord, "negative scan summary counter")
 	}
@@ -276,7 +318,8 @@ func validateEnforcement(record EnforcementRecord) error {
 }
 
 func validateEnvelope(schema, recordType, runID string, endpoint Endpoint) error {
-	if schema != SchemaVersion || recordType == "" || runID == "" {
+	if schema != SchemaVersion && schema != SchemaVersionNext ||
+		recordType == "" || runID == "" {
 		return issue(IssueInvalidRecord, "invalid record envelope")
 	}
 	if endpoint.OS == "" || endpoint.Arch == "" {
@@ -326,6 +369,7 @@ func duplicates(values []string) bool {
 }
 
 var (
+	sessionLinkID = regexp.MustCompile(`^sl-[a-f0-9]{32}$`)
 	lowerHex64    = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	enforcementID = regexp.MustCompile(`^enf-[a-f0-9]{24}$`)
 

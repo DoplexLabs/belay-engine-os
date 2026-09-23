@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/DoplexLabs/belay-engine/internal/canonical/model"
+	"github.com/DoplexLabs/belay-engine/internal/sessionidentity"
 	"github.com/DoplexLabs/belay-engine/internal/transcript"
 )
 
@@ -32,8 +33,9 @@ func (repository sessionProjectCoreRepository) GetSession(context.Context, strin
 }
 
 type sessionProjectTranscriptRepository struct {
-	keys []string
-	fail bool
+	keys    []string
+	fail    bool
+	aliases map[string]sessionidentity.ActiveAlias
 }
 
 func (r *sessionProjectTranscriptRepository) TranscriptCoverage(context.Context) (transcript.CoverageCounts, error) {
@@ -59,6 +61,19 @@ func (r *sessionProjectTranscriptRepository) QueryTranscriptSessionsByKeys(_ con
 			TotalCostUSD:    &cost,
 		},
 	}, nil
+}
+
+func (r *sessionProjectTranscriptRepository) QueryActiveSessionIdentityAliases(
+	_ context.Context,
+	keys []string,
+) (map[string]sessionidentity.ActiveAlias, error) {
+	result := make(map[string]sessionidentity.ActiveAlias)
+	for _, key := range keys {
+		if alias, ok := r.aliases[key]; ok {
+			result[key] = alias
+		}
+	}
+	return result, nil
 }
 
 func TestSessionListJoinsProjectLabelDurationAndCost(t *testing.T) {
@@ -94,5 +109,31 @@ func TestSessionListJoinsProjectLabelDurationAndCost(t *testing.T) {
 	list, err = service.ListSessionsPage(context.Background(), SessionListRequest{Limit: 10})
 	if err != nil || list.Data[0].Project != "" {
 		t.Fatalf("a failed join must leave the list intact: %+v %v", list.Data[0], err)
+	}
+
+	fused := &sessionProjectTranscriptRepository{
+		aliases: map[string]sessionidentity.ActiveAlias{
+			"ses_without": {
+				SessionKey:       "ses_without",
+				LinkedSessionKey: "ses_with_transcript",
+				Bases:            []string{sessionidentity.BasisExactNativeID},
+			},
+		},
+	}
+	service = New(
+		sessionProjectCoreRepository{now: now},
+		WithTranscriptRepository(fused),
+		WithFusedSessionReads(true),
+	)
+	list, err = service.ListSessionsPage(
+		context.Background(),
+		SessionListRequest{Limit: 10},
+	)
+	if err != nil || list.Data[1].Project != "billing-service" {
+		t.Fatalf(
+			"active fused alias should decorate the event session: %+v %v",
+			list.Data[1],
+			err,
+		)
 	}
 }

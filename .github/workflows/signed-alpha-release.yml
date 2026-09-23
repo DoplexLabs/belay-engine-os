@@ -6,7 +6,7 @@ on:
       version:
         description: Alpha version label
         required: true
-        default: 0.0.1-alpha.8
+        default: 0.0.1-alpha.11
         type: string
       publish:
         description: Publish a GitHub prerelease after every gate passes
@@ -21,8 +21,61 @@ env:
   ALPHA_VERSION: ${{ inputs.version }}
 
 jobs:
+  windows:
+    # Unsigned Windows build. Verified here so the release job only publishes
+    # archives that already passed the PowerShell packaging and installer checks.
+    name: Build and verify Windows archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Build Windows archive
+        run: |
+          scripts/build-developer-preview.sh \
+            --os windows \
+            --arch amd64 \
+            --version "${ALPHA_VERSION}" \
+            --output-dir dist
+
+      - name: Verify archive checksum
+        run: |
+          (
+            cd dist
+            sha256sum -c \
+              "belay-local-developer-alpha-v${ALPHA_VERSION}-windows-amd64.zip.sha256"
+          )
+
+      - name: Windows archive smoke (pwsh)
+        shell: pwsh
+        run: |
+          ./scripts/smoke-windows-preview.ps1 `
+            -Archive "dist/belay-local-developer-alpha-$env:ALPHA_VERSION-windows-amd64.zip" `
+            -ArchiveOnly
+
+      - name: Windows installer contract (pwsh)
+        shell: pwsh
+        run: ./scripts/install_windows_test.ps1
+
+      - name: Upload verified Windows archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: belay-local-windows-alpha-${{ inputs.version }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: Sign, notarize, verify, and optionally publish
+    needs: [windows]
     runs-on: macos-15
     timeout-minutes: 45
 
@@ -135,18 +188,36 @@ jobs:
           test ! -e "${QA_BIN}/belay"
           test ! -e "${QA_INSTALL}/runtime"
 
+      - name: Download verified Windows archive
+        uses: actions/download-artifact@v7
+        with:
+          name: belay-local-windows-alpha-${{ inputs.version }}
+          path: dist
+
       - name: Publish GitHub prerelease
         if: ${{ inputs.publish }}
         env:
           GH_TOKEN: ${{ secrets.BELAY_PUBLIC_RELEASE_TOKEN }}
         run: |
           cat > "${RUNNER_TEMP}/release-notes.md" <<EOF
-          Belay Local ${ALPHA_VERSION} for Apple Silicon macOS.
+          Belay Local ${ALPHA_VERSION} for Apple Silicon macOS and Windows.
 
-          Install:
+          The macOS build is Apple Silicon only, signed, and notarized. The
+          Windows build is unsigned, so Windows SmartScreen will warn before it
+          runs; use **More info -> Run anyway** only after checking the
+          published SHA-256 sum. Do not disable SmartScreen.
+
+          Install on macOS:
 
           \`\`\`bash
           curl -fsSL https://getbelay.vercel.app/install | bash
+          \`\`\`
+
+          Install on Windows, in PowerShell:
+
+          \`\`\`powershell
+          irm https://getbelay.vercel.app/install.ps1 -OutFile install.ps1
+          .\install.ps1 -AllowUntrusted
           \`\`\`
 
           Belay keeps agent session content on-device and requires no account.
@@ -161,7 +232,10 @@ jobs:
             --notes-file "${RUNNER_TEMP}/release-notes.md" \
             "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz" \
             "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-darwin-arm64.tar.gz.sha256" \
-            "scripts/install.sh"
+            "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-windows-amd64.zip" \
+            "dist/belay-local-developer-alpha-v${ALPHA_VERSION}-windows-amd64.zip.sha256" \
+            "scripts/install.sh" \
+            "scripts/install.ps1"
 
       - name: Upload verified release candidate
         uses: actions/upload-artifact@v7
@@ -170,7 +244,10 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
+            dist/*.zip
+            dist/*.zip.sha256
             scripts/install.sh
+            scripts/install.ps1
           if-no-files-found: error
           retention-days: 7
 

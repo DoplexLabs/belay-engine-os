@@ -42,6 +42,34 @@ type DirtyTranscriptProject struct {
 	AnalyzedGeneration   int64
 }
 
+// MarkTranscriptProjectAnalysisDirty requeues issue projection after
+// deterministic non-transcript evidence changes.
+func (s *Store) MarkTranscriptProjectAnalysisDirty(
+	ctx context.Context,
+	projectIdentity string,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("begin transcript project analysis requeue")
+	}
+	defer tx.Rollback()
+	err = withMutationTx(ctx, tx, mutationCostIssueAnalysis, func() error {
+		return markTranscriptProjectDirtyTx(
+			ctx,
+			tx,
+			projectIdentity,
+			formatProjectionTime(s.nowUTC()),
+		)
+	})
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("commit transcript project analysis requeue")
+	}
+	return nil
+}
+
 // ReplaceProjectIssueAnalysis atomically replaces all transcript-derived issue
 // intelligence for one project and marks the project's current transcript
 // generation analyzed.
@@ -255,11 +283,13 @@ func (s *Store) ReplaceProjectIssueAnalysis(
 		result, err := tx.ExecContext(ctx, `
 			UPDATE transcript_project_analysis_state
 			SET analyzed_generation = ?,
+				analysis_version = ?,
 				analyzed_at = ?,
 				updated_at = ?
 			WHERE project_identity = ?
 				AND transcript_generation = ?`,
 			expectedGeneration,
+			issueintel.CostIssueAnalysisVersion,
 			now,
 			now,
 			project.Identity,
@@ -295,6 +325,13 @@ func (s *Store) QueryCostIssues(
 		len(query.DetectorID) > maxCostIssueDetectorBytes {
 		return nil, errors.New("invalid cost issue query")
 	}
+	if query.RankingPolicy == "" {
+		query.RankingPolicy = issueintel.RankingPolicyDeterministic
+	}
+	if query.RankingPolicy != issueintel.RankingPolicyDeterministic &&
+		query.RankingPolicy != issueintel.RankingPolicyLegacy {
+		return nil, errors.New("invalid cost issue ranking policy")
+	}
 	clauses := []string{"1 = 1"}
 	args := make([]any, 0, 3)
 	if query.ProjectIdentity != "" {
@@ -304,6 +341,20 @@ func (s *Store) QueryCostIssues(
 	if query.DetectorID != "" {
 		clauses = append(clauses, "detector_id = ?")
 		args = append(args, query.DetectorID)
+	} else if query.RankingPolicy == issueintel.RankingPolicyLegacy {
+		clauses = append(clauses, "detector_id <> ?")
+		args = append(args, issueintel.DetectorFailureRepaired)
+	} else {
+		clauses = append(
+			clauses,
+			"detector_id <> ?",
+			"(detector_id <> ? OR session_count >= 2)",
+		)
+		args = append(
+			args,
+			issueintel.DetectorFileThrash,
+			issueintel.DetectorRepeatedCorrection,
+		)
 	}
 	args = append(args, query.Limit)
 	rows, err := s.db.QueryContext(ctx, `
@@ -389,8 +440,10 @@ func (s *Store) ListDirtyTranscriptProjects(
 			state.analyzed_generation
 		FROM transcript_project_analysis_state state
 		WHERE state.transcript_generation > state.analyzed_generation
+			OR state.analysis_version <> ?
 		ORDER BY state.updated_at ASC, state.project_identity ASC
 		LIMIT ?`,
+		issueintel.CostIssueAnalysisVersion,
 		limit,
 	)
 	if err != nil {

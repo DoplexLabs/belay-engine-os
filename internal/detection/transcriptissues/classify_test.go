@@ -240,6 +240,19 @@ func TestCommandRepairFamilyIsConservativeAndUnwrapsEnvironment(t *testing.T) {
 	}
 }
 
+func TestNormalizedFirstFailureLineSkipsGenericExitWrapper(t *testing.T) {
+	turn := transcript.Turn{
+		Role: transcript.RoleToolResult,
+		Payload: transcript.Payload{
+			ToolResult: "Exit code 1\nSyntaxError: unexpected identifier 'translate'",
+		},
+	}
+	if got := NormalizedFirstFailureLine(turn); got !=
+		"syntaxerror: unexpected identifier 'translate'" {
+		t.Fatalf("normalized failure line = %q", got)
+	}
+}
+
 func TestRetainedVerificationCommandRecognizesUnittestFromToolInput(t *testing.T) {
 	tests := []struct {
 		command string

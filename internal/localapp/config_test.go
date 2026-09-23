@@ -86,11 +86,49 @@ func TestResolvePathsUsesBelayHome(t *testing.T) {
 	if paths.Root != root {
 		t.Fatalf("root = %q, want %q", paths.Root, root)
 	}
-	if paths.CodexSpool == paths.ClaudeSpool {
-		t.Fatal("Codex and Claude must use separate live spools")
+	spools := map[string]string{
+		"codex":       paths.CodexSpool,
+		"claude":      paths.ClaudeSpool,
+		"cursor":      paths.CursorSpool,
+		"antigravity": paths.AntigravitySpool,
+	}
+	seen := make(map[string]string, len(spools))
+	for agent, spool := range spools {
+		if want := filepath.Join(root, "live", agent+".ndjson"); spool != want {
+			t.Fatalf("%s spool = %q, want %q", agent, spool, want)
+		}
+		if other, duplicate := seen[spool]; duplicate {
+			t.Fatalf("%s and %s share live spool %q", agent, other, spool)
+		}
+		seen[spool] = agent
 	}
 	if got, want := paths.TranscriptCursors,
 		filepath.Join(root, "transcripts", "cursors"); got != want {
 		t.Fatalf("transcript cursor root = %q, want %q", got, want)
+	}
+}
+
+func TestEnsurePrivateDirectoriesCreatesEveryLiveSpoolDirectory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "home")
+	paths, err := ResolvePaths(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDirectories(paths); err != nil {
+		t.Fatal(err)
+	}
+	for _, spool := range []string{
+		paths.CodexSpool,
+		paths.ClaudeSpool,
+		paths.CursorSpool,
+		paths.AntigravitySpool,
+	} {
+		info, err := os.Lstat(filepath.Dir(spool))
+		if err != nil {
+			t.Fatalf("live spool directory for %q missing: %v", spool, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("live spool parent for %q is not a directory", spool)
+		}
 	}
 }

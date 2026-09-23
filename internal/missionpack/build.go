@@ -314,6 +314,7 @@ func validateExperienceSource(value SourceRef) error {
 		value.IssueID,
 		value.InsightID,
 		value.CandidateID,
+		value.EpisodeID,
 		value.SessionKey,
 		value.EventID,
 		value.ProjectFile,
@@ -346,7 +347,7 @@ func validIntent(value Intent) bool {
 
 func validHarness(value Harness) bool {
 	switch value {
-	case "", HarnessClaude, HarnessCodex:
+	case "", HarnessClaude, HarnessCodex, HarnessCursor, HarnessAntigravity:
 		return true
 	default:
 		return false
@@ -453,6 +454,8 @@ func detectorFamily(detectorID string) string {
 		issueintel.DetectorPermissionChurn,
 		issueintel.DetectorColdStartCost,
 		issueintel.DetectorFileThrash,
+		issueintel.DetectorFileReversal,
+		issueintel.DetectorFailureRepaired,
 		issueintel.DetectorCompactionBeforeCompletion:
 		return strings.TrimSpace(detectorID)
 	default:
@@ -481,6 +484,20 @@ func buildKnownTraps(issues []issueintel.Issue) []GuidanceItem {
 
 func issueSources(issue issueintel.Issue) []SourceRef {
 	result := make([]SourceRef, 0, MaxSourcesPerItem)
+	episodeRefs := append([]string(nil), issue.EpisodeRefs...)
+	sort.Strings(episodeRefs)
+	for _, episodeID := range episodeRefs {
+		episodeID = boundedIdentifier(episodeID)
+		if episodeID == "" {
+			continue
+		}
+		result = append(result, SourceRef{
+			Kind:      "evidence_episode",
+			IssueID:   boundedIdentifier(issue.IssueID),
+			EpisodeID: episodeID,
+		})
+		break
+	}
 	for _, excerpt := range issue.Excerpts {
 		citation := excerpt.Citation
 		turnIndex := citation.TurnIndex
@@ -543,6 +560,10 @@ func knownTrapTitle(detectorID string) string {
 		return "High project cold-start cost"
 	case issueintel.DetectorFileThrash:
 		return "Repeated edits to the same file"
+	case issueintel.DetectorFileReversal:
+		return "File returned to an earlier edit state"
+	case issueintel.DetectorFailureRepaired:
+		return "A failed approach had a successful recovery"
 	case issueintel.DetectorCompactionBeforeCompletion:
 		return "Context compaction before verified completion"
 	default:
@@ -731,18 +752,50 @@ func semanticTargetForHarness(
 ) (string, bool) {
 	switch harness {
 	case HarnessClaude:
+		// An analysis run by the Antigravity CLI proposes its own rule
+		// file, .agents/rules/belay.md; Claude reads CLAUDE.md instead.
 		switch strings.TrimSpace(targetFile) {
 		case "CLAUDE.md", ".claude/settings.json":
 			return strings.TrimSpace(targetFile), true
-		case "AGENTS.md", ".codex/rules/default.rules":
+		case "AGENTS.md", ".codex/rules/default.rules",
+			".agents/rules/belay.md":
 			return "CLAUDE.md", true
 		}
 	case HarnessCodex:
 		switch strings.TrimSpace(targetFile) {
 		case "AGENTS.md", ".codex/rules/default.rules":
 			return strings.TrimSpace(targetFile), true
-		case "CLAUDE.md":
+		case "CLAUDE.md", ".agents/rules/belay.md":
 			return "AGENTS.md", true
+		case ".claude/settings.json":
+			return "", false
+		}
+	case HarnessCursor:
+		// Cursor reads AGENTS.md at the project root and has no CLAUDE.md,
+		// Codex rules file, or Antigravity rules directory, so every
+		// portable instruction target folds into AGENTS.md. Claude-only
+		// settings have no Cursor equivalent.
+		switch strings.TrimSpace(targetFile) {
+		case "AGENTS.md":
+			return "AGENTS.md", true
+		case "CLAUDE.md", ".codex/rules/default.rules",
+			".agents/rules/belay.md":
+			return "AGENTS.md", true
+		case ".claude/settings.json":
+			return "", false
+		}
+	case HarnessAntigravity:
+		// Antigravity reads project rules only from Markdown files under
+		// .agents/rules/ at the workspace root; it does not read AGENTS.md,
+		// CLAUDE.md, or Codex rules. Every portable instruction target folds
+		// into Belay's single owned rule file. Antigravity keeps permissions
+		// in IDE settings, so Claude-only settings have no equivalent.
+		// Belay owns exactly one Antigravity rule file, .agents/rules/belay.md.
+		switch strings.TrimSpace(targetFile) {
+		case ".agents/rules/belay.md":
+			return ".agents/rules/belay.md", true
+		case "AGENTS.md", "CLAUDE.md", ".codex/rules/default.rules":
+			return ".agents/rules/belay.md", true
 		case ".claude/settings.json":
 			return "", false
 		}
@@ -1601,6 +1654,7 @@ func normalizeSources(values []SourceRef, limit int) []SourceRef {
 		value.IssueID = boundedIdentifier(value.IssueID)
 		value.InsightID = boundedIdentifier(value.InsightID)
 		value.CandidateID = boundedIdentifier(value.CandidateID)
+		value.EpisodeID = boundedIdentifier(value.EpisodeID)
 		value.SessionKey = boundedIdentifier(value.SessionKey)
 		value.EventID = boundedIdentifier(value.EventID)
 		value.ProjectFile = boundedIdentifier(value.ProjectFile)
@@ -1646,6 +1700,7 @@ func sourceKey(value SourceRef) string {
 		value.IssueID,
 		value.InsightID,
 		value.CandidateID,
+		value.EpisodeID,
 		value.SessionKey,
 		fmt.Sprintf("%d", turn),
 		value.EventID,

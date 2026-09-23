@@ -25,7 +25,7 @@ const (
 )
 
 var (
-	ErrHabitHarnessUnavailable = errors.New("no Claude Code or Codex harness is installed for Habits")
+	ErrHabitHarnessUnavailable = errors.New("no Claude Code, Codex, Cursor CLI, or Antigravity CLI harness is installed for Habits")
 	ErrHabitSessionNotFound    = errors.New("habit debrief session not found")
 	ErrHabitSessionNotReady    = errors.New("habit debrief session is not complete yet")
 	ErrHabitGenerationFailed   = errors.New("habit debrief generation failed")
@@ -73,7 +73,7 @@ func WithHabitDebriefHarnessLookup(lookup func(string) (SemanticHarness, bool)) 
 }
 
 // WithHabitDebriefPreferredHarness sets the preferred harness name (auto,
-// claude, or codex).
+// claude, codex, cursor, or antigravity).
 func WithHabitDebriefPreferredHarness(preferred string) HabitDebriefServiceOption {
 	return func(service *HabitDebriefService) {
 		service.preferred = strings.TrimSpace(preferred)

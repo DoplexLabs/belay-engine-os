@@ -24,9 +24,18 @@ permissions: check time, ETag, latest compatible version, release name, public
 release URL, publication time, reminder time, dismissed version, opt-out
 state, and a bounded local error string.
 
-A compatible release must be non-draft and contain a macOS Apple Silicon
-archive. Belay compares semantic versions, including prereleases. It never
-downloads or installs an update automatically.
+A compatible release must be non-draft and contain an archive for the running
+platform. Belay matches the release asset name by suffix:
+
+| Running platform | Required asset suffix |
+|---|---|
+| `windows` (any architecture) | `-windows-<arch>.zip`, e.g. `-windows-amd64.zip` |
+| every other platform, including macOS | `-darwin-arm64.tar.gz` |
+
+Apple Silicon is the only published macOS archive, so a non-Windows build
+always looks for `-darwin-arm64.tar.gz`; Intel macOS and Linux have no release
+channel of their own. Belay compares semantic versions, including prereleases.
+It never downloads or installs an update automatically.
 
 ## User controls
 

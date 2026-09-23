@@ -243,3 +243,201 @@ func newIssueFixTestStore(
 		fixes: make(map[string]issueintel.FixRecord),
 	}
 }
+
+func TestCostIssueFixServiceProposesCursorProjectRuleWithFrontMatter(
+	t *testing.T,
+) {
+	root := t.TempDir()
+	store := newIssueFixTestStore(root, "harness_rule", cursorProjectRuleFile)
+	service, err := NewCostIssueFixService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.now = func() time.Time {
+		return time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	}
+	record, err := service.ProposeFix(
+		context.Background(),
+		store.issue.IssueID,
+		"harness_rule",
+		cursorProjectRuleFile,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != "proposed" ||
+		!strings.Contains(
+			record.UnifiedDiff,
+			"+++ b/"+cursorProjectRuleFile,
+		) ||
+		!strings.Contains(record.UnifiedDiff, "+alwaysApply: true") ||
+		!strings.Contains(
+			record.UnifiedDiff,
+			store.issue.SuggestedFix.Rationale,
+		) {
+		t.Fatalf("Cursor rule proposal = %+v", record)
+	}
+	if _, err := os.Stat(
+		filepath.Join(root, ".cursor", "rules", "belay.mdc"),
+	); !os.IsNotExist(err) {
+		t.Fatalf("proposal wrote the Cursor rule file: %v", err)
+	}
+}
+
+func TestFixTargetsStayInsideHarnessConfiguration(t *testing.T) {
+	for _, target := range []string{
+		"CLAUDE.md",
+		"AGENTS.md",
+		".claude/settings.json",
+		".claude/hooks/pre.sh",
+		".codex/config.toml",
+		".codex/rules/default.rules",
+		".cursorrules",
+		cursorProjectRuleFile,
+		antigravityProjectRuleFile,
+	} {
+		if got, err := normalizeFixTarget(target); err != nil ||
+			got != target {
+			t.Fatalf("normalizeFixTarget(%q) = %q, %v", target, got, err)
+		}
+	}
+	for _, target := range []string{
+		".cursor/rules/other.mdc",
+		".cursor/mcp.json",
+		".agents/rules/other.md",
+		".agent/rules/belay.md",
+		".agents/rules/belay.mdc",
+		"GEMINI.md",
+		"internal/example.go",
+		"../AGENTS.md",
+	} {
+		if _, err := normalizeFixTarget(target); err == nil {
+			t.Fatalf("normalizeFixTarget accepted %q", target)
+		}
+	}
+}
+
+func TestCursorProjectRuleRejectsPermissionFixes(t *testing.T) {
+	issue := issueintel.Issue{
+		SuggestedFix: issueintel.SuggestedFix{
+			Kind: "permission_allowlist",
+		},
+	}
+	if _, err := applyRuleToConfig(
+		cursorProjectRuleFile,
+		nil,
+		"Allow the verified command.",
+		issue,
+	); err == nil {
+		t.Fatal("Cursor rule accepted a permission fix")
+	}
+}
+
+func TestCostIssueFixServiceProposesAntigravityProjectRuleWithFrontMatter(
+	t *testing.T,
+) {
+	root := t.TempDir()
+	store := newIssueFixTestStore(
+		root,
+		"harness_rule",
+		antigravityProjectRuleFile,
+	)
+	service, err := NewCostIssueFixService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.now = func() time.Time {
+		return time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	}
+	record, err := service.ProposeFix(
+		context.Background(),
+		store.issue.IssueID,
+		"harness_rule",
+		antigravityProjectRuleFile,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != "proposed" ||
+		!strings.Contains(
+			record.UnifiedDiff,
+			"+++ b/"+antigravityProjectRuleFile,
+		) ||
+		!strings.Contains(record.UnifiedDiff, "+trigger: always_on") ||
+		!strings.Contains(
+			record.UnifiedDiff,
+			"+- "+store.issue.SuggestedFix.Rationale,
+		) {
+		t.Fatalf("Antigravity rule proposal = %+v", record)
+	}
+	if strings.Contains(record.UnifiedDiff, "alwaysApply") ||
+		strings.Contains(record.UnifiedDiff, "description:") {
+		t.Fatalf("Antigravity rule proposal used Cursor front matter: %s", record.UnifiedDiff)
+	}
+	if _, err := os.Stat(
+		filepath.Join(root, ".agents", "rules", "belay.md"),
+	); !os.IsNotExist(err) {
+		t.Fatalf("proposal wrote the Antigravity rule file: %v", err)
+	}
+}
+
+func TestAntigravityProjectRuleSeedsFrontMatterOnlyWhenEmpty(t *testing.T) {
+	issue := issueintel.Issue{
+		SuggestedFix: issueintel.SuggestedFix{Kind: "harness_rule"},
+	}
+	fresh, err := applyRuleToConfig(
+		antigravityProjectRuleFile,
+		nil,
+		"Run the focused verification command.",
+		issue,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(fresh) != antigravityRuleFrontMatter+
+		"\n- Run the focused verification command.\n" {
+		t.Fatalf("fresh Antigravity rule file = %q", fresh)
+	}
+	if antigravityRuleFrontMatter != "---\ntrigger: always_on\n---\n" {
+		t.Fatalf(
+			"Antigravity front matter = %q",
+			antigravityRuleFrontMatter,
+		)
+	}
+
+	existing := []byte(
+		"---\ntrigger: glob\nglobs: internal/**\n---\n- Existing rule.",
+	)
+	updated, err := applyRuleToConfig(
+		antigravityProjectRuleFile,
+		existing,
+		"Run the focused verification command.",
+		issue,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(updated) != string(existing)+
+		"\n\n- Run the focused verification command.\n" {
+		t.Fatalf("existing Antigravity rule file = %q", updated)
+	}
+	if strings.Count(string(updated), "trigger:") != 1 {
+		t.Fatalf("existing front matter was rewritten: %q", updated)
+	}
+}
+
+func TestAntigravityProjectRuleRejectsPermissionFixes(t *testing.T) {
+	issue := issueintel.Issue{
+		SuggestedFix: issueintel.SuggestedFix{
+			Kind: "permission_allowlist",
+		},
+	}
+	if _, err := applyRuleToConfig(
+		antigravityProjectRuleFile,
+		nil,
+		"Allow the verified command.",
+		issue,
+	); err == nil {
+		t.Fatal("Antigravity rule accepted a permission fix")
+	}
+}

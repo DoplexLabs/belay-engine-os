@@ -29,6 +29,24 @@ type HookResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// AgentSpool maps a supported Numbat launch agent onto its private live spool.
+// An unsupported agent yields an empty path so callers skip it rather than
+// writing hook output somewhere unowned.
+func AgentSpool(paths Paths, agent numbat.Agent) string {
+	switch agent {
+	case numbat.AgentCodex:
+		return paths.CodexSpool
+	case numbat.AgentClaude:
+		return paths.ClaudeSpool
+	case numbat.AgentCursor:
+		return paths.CursorSpool
+	case numbat.AgentAntigravity:
+		return paths.AntigravitySpool
+	default:
+		return ""
+	}
+}
+
 func StartHistoricalInitialization(
 	ctx context.Context,
 	tracker *initialization.Tracker,
@@ -70,9 +88,23 @@ func DiscoverAndScan(
 	}
 	var reports []HarnessScan
 	var scanErrors []error
-	for _, agent := range []numbat.Agent{numbat.AgentCodex, numbat.AgentClaude} {
+	for _, agent := range numbat.SupportedAgents() {
 		row, present := inventory.LaunchTargets[agent]
 		if !present || !row.Present {
+			continue
+		}
+		if !agent.HistoricalScanSupported() {
+			// Hook-only harnesses (Antigravity) have no at-rest artifacts the
+			// pinned Numbat can scan, and asking would fail before launch. The
+			// harness still gets a report row so callers see it was detected;
+			// the zero Import and exit code 0 say there was nothing to scan
+			// rather than that a scan failed. Its evidence arrives through the
+			// live hook spool instead.
+			reports = append(reports, HarnessScan{
+				Agent:    agent.String(),
+				Detected: true,
+				ExitCode: 0,
+			})
 			continue
 		}
 		report := HarnessScan{Agent: agent.String(), Detected: true, ExitCode: -1}
@@ -125,9 +157,22 @@ func ImportLive(
 		spool  string
 		cursor string
 	}
-	sources := []source{
-		{agent: "codex", spool: paths.CodexSpool, cursor: filepath.Join(paths.Root, "live", "codex.cursor.json")},
-		{agent: "claude", spool: paths.ClaudeSpool, cursor: filepath.Join(paths.Root, "live", "claude.cursor.json")},
+	supported := numbat.SupportedAgents()
+	sources := make([]source, 0, len(supported))
+	for _, agent := range supported {
+		spool := AgentSpool(paths, agent)
+		if spool == "" {
+			continue
+		}
+		sources = append(sources, source{
+			agent: agent.String(),
+			spool: spool,
+			cursor: filepath.Join(
+				paths.Root,
+				"live",
+				agent.String()+".cursor.json",
+			),
+		})
 	}
 	results := make([]TailResult, 0, len(sources))
 	var importErrors []error
@@ -197,9 +242,14 @@ func ManageHooks(
 		agent numbat.Agent
 		spool string
 	}
-	targets := []target{
-		{agent: numbat.AgentCodex, spool: paths.CodexSpool},
-		{agent: numbat.AgentClaude, spool: paths.ClaudeSpool},
+	supported := numbat.SupportedAgents()
+	targets := make([]target, 0, len(supported))
+	for _, agent := range supported {
+		spool := AgentSpool(paths, agent)
+		if spool == "" {
+			continue
+		}
+		targets = append(targets, target{agent: agent, spool: spool})
 	}
 	results := make([]HookResult, 0, len(targets))
 	if action == "install" {

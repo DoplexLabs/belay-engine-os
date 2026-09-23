@@ -36,6 +36,8 @@ const (
 	mutationExperienceImpact       mutationPurpose = "experience_impact"
 	mutationTrajectoryDerivation   mutationPurpose = "trajectory_derivation"
 	mutationHabitDebrief           mutationPurpose = "habit_debrief"
+	mutationSessionIdentity        mutationPurpose = "session_identity"
+	mutationEvidenceEpisode        mutationPurpose = "evidence_episode"
 	guardedSQLiteDriverName                        = "belay_local_sqlite"
 )
 
@@ -178,6 +180,35 @@ func initializeMutationConnection(
 			return errors.New("install connection-local habit debrief mutation guards")
 		}
 	}
+	sessionIdentityReady, err := sessionIdentityMutationTablesReady(ctx, connection)
+	if err != nil {
+		return err
+	}
+	if sessionIdentityReady {
+		if _, err := connection.ExecContext(
+			ctx,
+			sessionIdentityMutationTriggerSQL,
+			nil,
+		); err != nil {
+			return errors.New("install connection-local session identity mutation guards")
+		}
+	}
+	evidenceEpisodeReady, err := evidenceEpisodeMutationTablesReady(
+		ctx,
+		connection,
+	)
+	if err != nil {
+		return err
+	}
+	if evidenceEpisodeReady {
+		if _, err := connection.ExecContext(
+			ctx,
+			evidenceEpisodeMutationTriggerSQL,
+			nil,
+		); err != nil {
+			return errors.New("install connection-local evidence episode mutation guards")
+		}
+	}
 	return nil
 }
 
@@ -203,6 +234,61 @@ func habitDebriefMutationTablesReady(
 	count, ok := values[0].(int64)
 	if !ok {
 		return false, errors.New("inspect habit debrief mutation schema")
+	}
+	return count == 1, nil
+}
+
+func sessionIdentityMutationTablesReady(
+	ctx context.Context,
+	connection driver.QueryerContext,
+) (bool, error) {
+	rows, err := connection.QueryContext(ctx, `
+		SELECT COUNT(*)
+		FROM main.sqlite_schema
+		WHERE type = 'table'
+			AND name IN (
+				'session_identity_observations',
+				'session_identity_links'
+			)`,
+		nil,
+	)
+	if err != nil {
+		return false, errors.New("inspect session identity mutation schema")
+	}
+	defer rows.Close()
+	values := make([]driver.Value, 1)
+	if err := rows.Next(values); err != nil {
+		return false, errors.New("inspect session identity mutation schema")
+	}
+	count, ok := values[0].(int64)
+	if !ok {
+		return false, errors.New("inspect session identity mutation schema")
+	}
+	return count == 2, nil
+}
+
+func evidenceEpisodeMutationTablesReady(
+	ctx context.Context,
+	connection driver.QueryerContext,
+) (bool, error) {
+	rows, err := connection.QueryContext(ctx, `
+		SELECT COUNT(*)
+		FROM main.sqlite_schema
+		WHERE type = 'table'
+			AND name = 'evidence_episodes'`,
+		nil,
+	)
+	if err != nil {
+		return false, errors.New("inspect evidence episode mutation schema")
+	}
+	defer rows.Close()
+	values := make([]driver.Value, 1)
+	if err := rows.Next(values); err != nil {
+		return false, errors.New("inspect evidence episode mutation schema")
+	}
+	count, ok := values[0].(int64)
+	if !ok {
+		return false, errors.New("inspect evidence episode mutation schema")
 	}
 	return count == 1, nil
 }
@@ -564,6 +650,12 @@ func (s *Store) installMutationGuards(ctx context.Context) error {
 	if _, err := connection.ExecContext(ctx, habitDebriefMutationTriggerSQL); err != nil {
 		return errors.New("install connection-local habit debrief mutation guards")
 	}
+	if _, err := connection.ExecContext(ctx, sessionIdentityMutationTriggerSQL); err != nil {
+		return errors.New("install connection-local session identity mutation guards")
+	}
+	if _, err := connection.ExecContext(ctx, evidenceEpisodeMutationTriggerSQL); err != nil {
+		return errors.New("install connection-local evidence episode mutation guards")
+	}
 	return nil
 }
 
@@ -621,7 +713,9 @@ const mutationAuthorizationTableSQL = `
 					'mission_pack_receipt',
 					'experience_impact',
 					'trajectory_derivation',
-					'habit_debrief'
+					'habit_debrief',
+					'session_identity',
+					'evidence_episode'
 				)
 			)
 	) WITHOUT ROWID;
@@ -1665,4 +1759,92 @@ const habitDebriefMutationTriggerSQL = `
 	)
 	BEGIN
 		SELECT RAISE(ABORT, 'habit debrief deletion is not authorized');
+	END;`
+
+const sessionIdentityMutationTriggerSQL = `
+	CREATE TEMP TRIGGER IF NOT EXISTS belay_guard_session_identity_insert
+	BEFORE INSERT ON main.session_identity_observations
+	WHEN NOT EXISTS (
+		SELECT 1 FROM belay_mutation_authorization
+		WHERE purpose = 'session_identity'
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'session identity insertion is not authorized');
+	END;
+
+	CREATE TEMP TRIGGER IF NOT EXISTS belay_guard_session_identity_update
+	BEFORE UPDATE ON main.session_identity_observations
+	WHEN NOT EXISTS (
+		SELECT 1 FROM belay_mutation_authorization
+		WHERE purpose = 'session_identity'
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'session identity mutation is not authorized');
+	END;
+
+	CREATE TEMP TRIGGER IF NOT EXISTS belay_guard_session_identity_delete
+	BEFORE DELETE ON main.session_identity_observations
+	WHEN NOT EXISTS (
+		SELECT 1 FROM belay_mutation_authorization
+		WHERE purpose IN ('session_identity', 'retention_prune')
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'session identity deletion is not authorized');
+	END;
+
+	CREATE TEMP TRIGGER IF NOT EXISTS belay_guard_session_identity_links_insert
+	BEFORE INSERT ON main.session_identity_links
+	WHEN NOT EXISTS (
+		SELECT 1 FROM belay_mutation_authorization
+		WHERE purpose = 'session_identity'
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'session identity link insertion is not authorized');
+	END;
+
+	CREATE TEMP TRIGGER IF NOT EXISTS belay_guard_session_identity_links_update
+	BEFORE UPDATE ON main.session_identity_links
+	WHEN NOT EXISTS (
+		SELECT 1 FROM belay_mutation_authorization
+		WHERE purpose = 'session_identity'
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'session identity link mutation is not authorized');
+	END;
+
+	CREATE TEMP TRIGGER IF NOT EXISTS belay_guard_session_identity_links_delete
+	BEFORE DELETE ON main.session_identity_links
+	WHEN NOT EXISTS (
+		SELECT 1 FROM belay_mutation_authorization
+		WHERE purpose IN ('session_identity', 'retention_prune')
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'session identity link deletion is not authorized');
+	END;`
+
+const evidenceEpisodeMutationTriggerSQL = `
+	CREATE TEMP TRIGGER IF NOT EXISTS belay_guard_evidence_episodes_insert
+	BEFORE INSERT ON main.evidence_episodes
+	WHEN NOT EXISTS (
+		SELECT 1 FROM belay_mutation_authorization
+		WHERE purpose = 'evidence_episode'
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'evidence episode insertion is not authorized');
+	END;
+
+	CREATE TEMP TRIGGER IF NOT EXISTS belay_guard_evidence_episodes_update
+	BEFORE UPDATE ON main.evidence_episodes
+	BEGIN
+		SELECT RAISE(ABORT, 'evidence episodes are immutable');
+	END;
+
+	CREATE TEMP TRIGGER IF NOT EXISTS belay_guard_evidence_episodes_delete
+	BEFORE DELETE ON main.evidence_episodes
+	WHEN NOT EXISTS (
+		SELECT 1 FROM belay_mutation_authorization
+		WHERE purpose IN ('evidence_episode', 'retention_prune')
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'evidence episode deletion is not authorized');
 	END;`

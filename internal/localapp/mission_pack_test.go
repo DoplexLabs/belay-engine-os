@@ -756,10 +756,24 @@ func TestMissionPackServiceRejectsInvalidHarness(t *testing.T) {
 	_, err = service.Generate(context.Background(), missionpack.Request{
 		CWD:     root,
 		Intent:  missionpack.IntentImplement,
-		Harness: missionpack.Harness("cursor"),
+		Harness: missionpack.Harness("windsurf"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "harness") {
 		t.Fatalf("Generate() error = %v", err)
+	}
+	if _, err := validateMissionPackRequest(missionpack.Request{
+		CWD:     root,
+		Intent:  missionpack.IntentImplement,
+		Harness: missionpack.HarnessCursor,
+	}); err != nil {
+		t.Fatalf("Cursor Mission Pack request rejected: %v", err)
+	}
+	if _, err := validateMissionPackRequest(missionpack.Request{
+		CWD:     root,
+		Intent:  missionpack.IntentImplement,
+		Harness: missionpack.HarnessAntigravity,
+	}); err != nil {
+		t.Fatalf("Antigravity Mission Pack request rejected: %v", err)
 	}
 	if repository.readCalls != 0 {
 		t.Fatalf("evidence reads = %d, want 0", repository.readCalls)

@@ -18,16 +18,31 @@ func runMCPConfig(
 	stdout, stderr io.Writer,
 ) error {
 	if len(args) == 0 {
+		printMCPConfigUsage(stderr)
 		return errors.New("mcp-config requires install, status, or uninstall")
+	}
+	if isHelpArgument(args[0]) {
+		printMCPConfigUsage(stdout)
+		return nil
 	}
 	action := localapp.MCPConfigAction(args[0])
 	if action != localapp.MCPConfigInstall &&
 		action != localapp.MCPConfigStatus &&
 		action != localapp.MCPConfigUninstall {
+		printMCPConfigUsage(stderr)
 		return fmt.Errorf("unknown mcp-config action %q", args[0])
 	}
 	flags := flag.NewFlagSet("mcp-config "+string(action), flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	flags.Usage = func() {
+		fmt.Fprintf(stderr, "Usage: belay mcp-config %s [flags]\n", action)
+		fmt.Fprintln(
+			stderr,
+			"Targets: codex (CLI), claude (CLI), cursor (~/.cursor/mcp.json), "+
+				"antigravity (~/.gemini/config/mcp_config.json).",
+		)
+		flags.PrintDefaults()
+	}
 	home := flags.String(
 		"home",
 		"",
@@ -98,18 +113,37 @@ func onboardMCPConfiguration(
 		AllowCodexMCPAdd: allowCodexMCPAdd,
 	})
 	statuses := map[string]string{
-		"codex":  "unavailable",
-		"claude": "unavailable",
+		"codex":       "unavailable",
+		"claude":      "unavailable",
+		"cursor":      "unavailable",
+		"antigravity": "unavailable",
 	}
 	for _, target := range result.Targets {
 		statuses[target.Agent] = target.Status
 	}
 	fmt.Fprintf(
 		stderr,
-		"belay %s: mcp codex=%s claude=%s\n",
+		"belay %s: mcp codex=%s claude=%s cursor=%s antigravity=%s\n",
 		commandName,
 		statuses["codex"],
 		statuses["claude"],
+		statuses["cursor"],
+		statuses["antigravity"],
 	)
 	return err == nil && result.Complete()
+}
+
+func printMCPConfigUsage(writer io.Writer) {
+	fmt.Fprintln(writer, `usage: belay mcp-config ACTION [flags]
+
+Actions:
+  status      show whether the Belay Local MCP server is registered with each agent
+  install     register the Belay Local MCP server with detected agents
+  uninstall   remove the Belay Local MCP registration
+
+Examples:
+  belay mcp-config status
+  belay mcp-config install
+
+Run belay mcp-config ACTION -h for the flags of one action.`)
 }

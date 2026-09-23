@@ -1468,6 +1468,7 @@
           .join(" · "),
       ),
     );
+    card.append(createIssueEvidenceBasis(issue));
     if (issue.excerpts.length) {
       card.append(createReportIssuePreview(issue.excerpts[0]));
     }
@@ -3094,6 +3095,9 @@
       !Array.isArray(issue.sessions) ||
       !Array.isArray(issue.trend) ||
       !Array.isArray(issue.excerpts) ||
+      !isRecord(issue.evidence_basis) ||
+      !readText(issue.evidence_basis.kind) ||
+      !readText(issue.evidence_basis.summary) ||
       !isRecord(issue.project) ||
       !isRecord(issue.suggested_fix)
     ) {
@@ -3176,6 +3180,7 @@
     if (issue.excerpts.length) {
       card.append(createCostIssueExcerpt(issue.excerpts[0], true));
     }
+    card.append(createIssueEvidenceBasis(issue));
     const trend = issue.trend
       .slice(-8)
       .map((week) => formatNumber(week && week.count))
@@ -3277,6 +3282,20 @@
     evidence.append(evidenceList);
     card.append(evidence);
     return card;
+  }
+
+  function createIssueEvidenceBasis(issue) {
+    const basis = isRecord(issue && issue.evidence_basis)
+      ? issue.evidence_basis
+      : {};
+    const summary =
+      readText(basis.summary) ||
+      "Detected from retained session activity.";
+    return createElement(
+      "p",
+      "issue-evidence-basis",
+      `Why Belay flagged this · ${summary}`,
+    );
   }
 
   function appendCostMetric(list, label, value) {
@@ -10788,7 +10807,7 @@
           ? `${sessions.length} of your last ${sessions.length} sessions debriefed by your ${habitsHarnessLabel(insights.harness.name)}.`
           : insights.harness.available
             ? `${ready.length} of ${sessions.length} debriefed. Belay is writing the ${pending === 1 ? "other one" : `other ${pending}`} with your ${habitsHarnessLabel(insights.harness.name)} in the background.`
-            : "Install Claude Code or Codex on this machine and Belay will debrief these sessions automatically.";
+            : "Install Claude Code, Codex, the Cursor CLI, or the Antigravity CLI on this machine and Belay will debrief these sessions automatically.";
     const cards = document.createDocumentFragment();
     sessions.forEach((session) => {
       cards.appendChild(renderReportHabitCard(session, insights.harness));
@@ -10988,6 +11007,8 @@
       .filter(isRecord)
       .map((session) => ({
         ...session,
+        signals: Array.isArray(session.signals) ? session.signals.filter(isRecord).slice(0, 5) : [],
+        findings: Array.isArray(session.findings) ? session.findings.filter(isRecord).slice(0, 3) : [],
         debrief: requireHabitsDebrief(session.debrief),
         debrief_status: readText(session.debrief_status) || "missing",
       }));
@@ -11023,6 +11044,8 @@
     const value = readText(name).toLowerCase();
     if (value === "claude" || value === "claude-code") return "Claude Code";
     if (value === "codex") return "Codex";
+    if (value === "cursor" || value === "cursor-agent") return "Cursor";
+    if (value === "antigravity") return "Antigravity";
     return "your agent";
   }
 
@@ -11067,7 +11090,7 @@
     );
     elements.habitsWindow.textContent = insights.harness.available
       ? `One debrief per session, written by your ${habitsHarnessLabel(insights.harness.name)}.`
-      : "Install Claude Code or Codex on this machine and Belay will write a debrief for each session.";
+      : "Install Claude Code, Codex, the Cursor CLI, or the Antigravity CLI on this machine and Belay will write a debrief for each session.";
     elements.habitsStatus.textContent = habitsCoverageText(insights.coverage);
     elements.habitsEmpty.hidden = sessions.length > 0;
     const rail = document.createDocumentFragment();
@@ -11159,10 +11182,13 @@
       snippet = readText(session.debrief.debrief.headline);
     } else if (habitsCardErrors.has(key)) {
       snippet = "Debrief failed. Open to retry.";
-    } else if (harness.available) {
-      snippet = "Not debriefed yet";
     } else {
-      snippet = "No debrief";
+      const signals = Array.isArray(session.signals) ? session.signals : [];
+      const findings = Array.isArray(session.findings) ? session.findings : [];
+      snippet =
+        readText(signals[0] && signals[0].title) ||
+        readText(findings[0] && findings[0].title) ||
+        "Session summary ready";
     }
     item.appendChild(createElement("span", "habits-rail-snippet", snippet));
     item.addEventListener("click", () => {
@@ -11273,7 +11299,7 @@
     const title = createElement(
       "h2",
       "habits-detail-title",
-      (record && readText(record.debrief.title)) || readText(session.project) || "Session",
+      (record && readText(record.debrief.title)) || "What Belay observed",
     );
     title.id = "habits-detail-title";
     title.tabIndex = -1;
@@ -11306,28 +11332,21 @@
       root.appendChild(createElement("p", "habits-card-error", cardError));
     }
     if (!record) {
+      root.appendChild(renderDeterministicHabits(session, key, true));
       const actions = createElement("div", "habits-actions");
       if (harness.available) {
         const button = createElement(
           "button",
-          "primary-button",
-          `Debrief this session with ${habitsHarnessLabel(harness.name)}`,
+          "secondary-button",
+          `Add an AI-written debrief with ${habitsHarnessLabel(harness.name)}`,
         );
         button.type = "button";
         button.addEventListener("click", () => {
           void generateHabitsDebrief(key, false);
         });
         actions.appendChild(button);
-      } else {
-        actions.appendChild(
-          createElement(
-            "p",
-            "habits-quiet",
-            "Install Claude Code or Codex on this machine to write a debrief for this session.",
-          ),
-        );
       }
-      root.appendChild(actions);
+      if (actions.childNodes.length) root.appendChild(actions);
       return root;
     }
     if (session.debrief_status === "stale") {
@@ -11340,6 +11359,9 @@
       );
     }
     const debrief = record.debrief;
+    if (Array.isArray(session.signals) && session.signals.length) {
+      root.appendChild(renderDeterministicHabits(session, key, false));
+    }
     root.appendChild(renderHabitsStats(debrief, session));
     root.appendChild(renderHabitsTimeExplanation(debrief));
     root.appendChild(renderHabitsTimeline(debrief, session));
@@ -11358,6 +11380,64 @@
       .join(" · ");
     root.appendChild(createElement("p", "habits-provenance", provenance));
     return root;
+  }
+
+  function renderDeterministicHabits(session, key, includeFindings) {
+    const section = createElement("section", "habits-deterministic");
+    const signals = Array.isArray(session.signals) ? session.signals : [];
+    const findings = Array.isArray(session.findings) ? session.findings : [];
+    const items = [
+      ...signals.map((signal) => ({
+        title: readText(signal.title),
+        summary: readText(signal.summary),
+        next: "",
+        turns:
+          Number.isInteger(Number(signal.first_turn)) && Number.isInteger(Number(signal.last_turn))
+            ? `Turns ${Number(signal.first_turn)}–${Number(signal.last_turn)}`
+            : "",
+      })),
+      ...(includeFindings
+        ? findings.map((finding) => ({
+            title: readText(finding.title),
+            summary: readText(finding.summary),
+            next: readText(finding.next_time),
+            turns: "",
+          }))
+        : []),
+    ]
+      .filter((item) => item.title && item.summary)
+      .slice(0, 5);
+
+    if (!items.length) {
+      section.appendChild(
+        createElement(
+          "p",
+          "habits-quiet",
+          "Belay did not find a strong deterministic habit in this session.",
+        ),
+      );
+    } else {
+      section.appendChild(createElement("p", "habits-deterministic-label", "Available immediately from local evidence"));
+      const list = createElement("div", "habits-deterministic-list");
+      items.forEach((item) => {
+        const card = createElement("article", "habits-deterministic-card");
+        card.appendChild(createElement("h3", "", item.title));
+        card.appendChild(createElement("p", "", item.summary));
+        if (item.next) card.appendChild(createElement("p", "habits-deterministic-next", `Next time: ${item.next}`));
+        if (item.turns) card.appendChild(createElement("p", "habits-deterministic-evidence", item.turns));
+        list.appendChild(card);
+      });
+      section.appendChild(list);
+    }
+
+    const evidence = createElement("button", "text-button", "Open session evidence");
+    evidence.type = "button";
+    evidence.addEventListener("click", () => {
+      setActiveView("sessions", true);
+      openSession(key, null);
+    });
+    section.appendChild(evidence);
+    return section;
   }
 
   function habitsPhaseSpan(phase) {

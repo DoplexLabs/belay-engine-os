@@ -23,7 +23,9 @@ func TestCostIssueToolsReturnRankedIssuesAndVerbatimExcerpts(t *testing.T) {
 		t.Fatalf("top issue data = %#v", topReadmodel["data"])
 	}
 	issue := asObject(t, data[0])
-	if issue["issue_id"] != "csi_test" {
+	if issue["issue_id"] != "csi_test" ||
+		asObject(t, issue["evidence_basis"])["kind"] !=
+			issueintel.EvidenceBasisTranscriptExcerpt {
 		t.Fatalf("top issue = %#v", issue)
 	}
 
@@ -39,7 +41,9 @@ func TestCostIssueToolsReturnRankedIssuesAndVerbatimExcerpts(t *testing.T) {
 	)
 	values, ok := excerptReadmodel["excerpts"].([]any)
 	if !ok || len(values) != 2 ||
-		asObject(t, values[1])["text"] != "FAIL package/example" {
+		asObject(t, values[1])["text"] != "FAIL package/example" ||
+		asObject(t, excerptReadmodel["evidence_basis"])["kind"] !=
+			issueintel.EvidenceBasisTranscriptExcerpt {
 		t.Fatalf("issue excerpts = %#v", excerptReadmodel)
 	}
 }

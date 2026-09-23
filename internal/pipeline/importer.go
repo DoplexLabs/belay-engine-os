@@ -18,6 +18,7 @@ import (
 	"github.com/DoplexLabs/belay-engine/internal/acquisition/numbat"
 	"github.com/DoplexLabs/belay-engine/internal/analysis"
 	"github.com/DoplexLabs/belay-engine/internal/canonical/numbatmap"
+	"github.com/DoplexLabs/belay-engine/internal/sessionidentity"
 	"github.com/DoplexLabs/belay-engine/internal/storage/local"
 )
 
@@ -33,18 +34,19 @@ type Importer struct {
 }
 
 type Report struct {
-	Lines               int64 `json:"lines"`
-	EventsAccepted      int   `json:"events_accepted"`
-	EventDuplicates     int   `json:"event_duplicates"`
-	FindingsAccepted    int   `json:"findings_accepted"`
-	FindingDuplicates   int   `json:"finding_duplicates"`
-	SummariesAccepted   int   `json:"summaries_accepted"`
-	DiagnosticsAccepted int   `json:"diagnostics_accepted"`
-	IndicatorsIgnored   int   `json:"indicators_ignored"`
-	EnforcementRejected int   `json:"enforcement_rejected"`
-	Quarantined         int   `json:"quarantined"`
-	Malformed           int   `json:"malformed"`
-	Oversized           int   `json:"oversized"`
+	Lines                int64 `json:"lines"`
+	EventsAccepted       int   `json:"events_accepted"`
+	EventDuplicates      int   `json:"event_duplicates"`
+	FindingsAccepted     int   `json:"findings_accepted"`
+	FindingDuplicates    int   `json:"finding_duplicates"`
+	SummariesAccepted    int   `json:"summaries_accepted"`
+	DiagnosticsAccepted  int   `json:"diagnostics_accepted"`
+	IndicatorsIgnored    int   `json:"indicators_ignored"`
+	EnforcementRejected  int   `json:"enforcement_rejected"`
+	SessionLinksAccepted int   `json:"session_links_accepted"`
+	Quarantined          int   `json:"quarantined"`
+	Malformed            int   `json:"malformed"`
+	Oversized            int   `json:"oversized"`
 }
 
 func New(store *local.Store, installationID, engineVersion string) *Importer {
@@ -176,6 +178,33 @@ func (i *Importer) handle(ctx context.Context, line int64, digest string, record
 		if err != nil {
 			return err
 		}
+		if value.SessionID != "" {
+			observation := sessionidentity.Observation{
+				SourceKind:            sessionIdentitySourceKind(value.SourceType),
+				SourceAgent:           value.SourceAgent,
+				SourceSessionKey:      event.Session.Key,
+				NativeNamespace:       "numbat_" + value.SourceType,
+				NativeSessionID:       value.SessionID,
+				ArtifactType:          value.Evidence.ArtifactType,
+				ArtifactSHA256:        value.Evidence.SHA256,
+				SourceRunID:           value.RunID,
+				Coverage:              sessionidentity.CoverageObserved,
+				ObservedAt:            event.ObservedAt,
+				ParentNativeSessionID: value.ParentSessionID,
+			}
+			switch value.EventType {
+			case "session.start":
+				observation.StartedAt = event.OccurredAt
+			case "session.end":
+				observation.EndedAt = event.OccurredAt
+			}
+			if err := i.store.UpsertSessionIdentityObservation(
+				ctx,
+				observation,
+			); err != nil {
+				return err
+			}
+		}
 		if err := analysis.EnrichEventRecord(
 			ctx,
 			i.store,
@@ -195,6 +224,59 @@ func (i *Importer) handle(ctx context.Context, line int64, digest string, record
 		} else {
 			report.EventDuplicates++
 		}
+	case numbat.SessionLinkRecord:
+		if err := i.store.TouchImportRun(ctx, value.RunID); err != nil {
+			return err
+		}
+		switch value.Relationship {
+		case "hook_artifact_alias", "rotated_artifact":
+			left := numbatmap.SessionKey(
+				value.SourceAgent,
+				value.Left.SessionID,
+				"",
+			)
+			right := numbatmap.SessionKey(
+				value.SourceAgent,
+				value.Right.SessionID,
+				"",
+			)
+			if left != right {
+				link := sessionidentity.NewSourceLineageLink(
+					left,
+					right,
+					append([]string{value.LinkID}, value.SourceRefs...),
+					i.now(),
+				)
+				if _, err := i.store.UpsertSessionIdentityLink(
+					ctx,
+					link,
+				); err != nil {
+					return err
+				}
+			}
+		case "parent_subagent":
+			child := value.Right.SessionID
+			parent := value.Left.SessionID
+			if child != "" && parent != "" && child != parent {
+				if err := i.store.UpsertSessionIdentityObservation(
+					ctx,
+					sessionidentity.Observation{
+						SourceKind:            sessionidentity.SourceNumbatArtifact,
+						SourceAgent:           value.SourceAgent,
+						SourceSessionKey:      numbatmap.SessionKey(value.SourceAgent, child, ""),
+						NativeNamespace:       "numbat_" + value.Right.Namespace,
+						NativeSessionID:       child,
+						ParentNativeSessionID: parent,
+						SourceRunID:           value.RunID,
+						Coverage:              sessionidentity.CoverageObserved,
+						ObservedAt:            i.now(),
+					},
+				); err != nil {
+					return err
+				}
+			}
+		}
+		report.SessionLinksAccepted++
 	case numbat.FindingRecord:
 		if err := i.store.TouchImportRun(ctx, value.RunID); err != nil {
 			return err
@@ -344,6 +426,19 @@ func (i *Importer) handle(ctx context.Context, line int64, digest string, record
 		return fmt.Errorf("internal error: unhandled validated record %T", record)
 	}
 	return nil
+}
+
+func sessionIdentitySourceKind(sourceType string) string {
+	switch sourceType {
+	case "artifact":
+		return sessionidentity.SourceNumbatArtifact
+	case "hook":
+		return sessionidentity.SourceNumbatHook
+	case "otel":
+		return sessionidentity.SourceOTLP
+	default:
+		return "numbat_" + sourceType
+	}
 }
 
 type boundedLine struct {

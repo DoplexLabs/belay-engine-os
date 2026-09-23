@@ -16,7 +16,9 @@ import (
 	belaytranscript "github.com/DoplexLabs/belay-engine/internal/transcript"
 )
 
-const ParserVersion = "belay.native-transcript.v3"
+// ParserVersion is shared by every agent parser in this package, so it is bumped
+// whenever any of them changes what it produces. v4 adds the Cursor parser.
+const ParserVersion = "belay.native-transcript.v4"
 
 type parser struct {
 	source          Source
@@ -126,6 +128,8 @@ func Parse(
 			value.parseClaude(record)
 		case AgentCodex:
 			value.parseCodex(record)
+		case AgentCursor:
+			value.parseCursor(record)
 		default:
 			return Result{}, errors.New("unsupported transcript agent")
 		}

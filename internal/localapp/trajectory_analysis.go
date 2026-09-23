@@ -34,6 +34,7 @@ type TrajectoryDerivationStore interface {
 
 type TrajectoryDerivationReport struct {
 	SessionKey        string
+	ProjectIdentity   string
 	DerivationVersion string
 	EdgesInserted     int
 	EdgesReplayed     int
@@ -62,6 +63,7 @@ type IncrementalTrajectoryDerivationStore interface {
 		string,
 		bool,
 	) (local.TrajectoryDerivationState, error)
+	MarkTranscriptProjectAnalysisDirty(context.Context, string) error
 }
 
 type TrajectoryBatchReport struct {
@@ -115,6 +117,7 @@ func DeriveSessionTrajectoryOnce(
 	}
 	report := TrajectoryDerivationReport{
 		SessionKey:        sessionKey,
+		ProjectIdentity:   session.ProjectIdentity,
 		DerivationVersion: derived.DerivationVersion,
 		Coverage:          derived.Coverage,
 		Diagnostics:       append([]trajectoryderive.Diagnostic(nil), derived.Diagnostics...),
@@ -232,10 +235,27 @@ func AnalyzeTrajectorySessionsOnce(
 					err,
 				),
 			)
-		case derived.Coverage.FullyDerived:
-			report.Complete++
 		default:
-			report.Partial++
+			if derived.EdgesInserted > 0 || derived.OutcomesInserted > 0 {
+				if err := store.MarkTranscriptProjectAnalysisDirty(
+					ctx,
+					derived.ProjectIdentity,
+				); err != nil {
+					runErrors = append(
+						runErrors,
+						fmt.Errorf(
+							"requeue issue analysis for trajectory session %q: %w",
+							claim.SessionKey,
+							err,
+						),
+					)
+				}
+			}
+			if derived.Coverage.FullyDerived {
+				report.Complete++
+			} else {
+				report.Partial++
+			}
 		}
 	}
 	return report, errors.Join(runErrors...)

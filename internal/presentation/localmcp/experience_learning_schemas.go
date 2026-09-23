@@ -16,6 +16,8 @@ func listExperienceProposalsSchemas() (*strictToolSchemas, error) {
 			"harness": enumStringSchema(
 				string(experience.HarnessClaude),
 				string(experience.HarnessCodex),
+				string(experience.HarnessCursor),
+				string(experience.HarnessAntigravity),
 			),
 			"limit": integerSchema(
 				1,
@@ -233,6 +235,8 @@ func activeExperienceScopeSchema() *jsonschema.Schema {
 				enumStringSchema(
 					string(experience.HarnessClaude),
 					string(experience.HarnessCodex),
+					string(experience.HarnessCursor),
+					string(experience.HarnessAntigravity),
 				),
 				0,
 				maxExperienceLearningProjectionItems,
@@ -625,6 +629,8 @@ func experienceScopeSchema() *jsonschema.Schema {
 				enumStringSchema(
 					string(experience.HarnessClaude),
 					string(experience.HarnessCodex),
+					string(experience.HarnessCursor),
+					string(experience.HarnessAntigravity),
 				),
 				0,
 				128,

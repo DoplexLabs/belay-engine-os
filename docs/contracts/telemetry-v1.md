@@ -27,7 +27,7 @@ prohibited classes below.
   "schema_version": "belay.telemetry.v1",
   "event": "active",
   "telemetry_id": "8d4c1d1e-6f1a-4b8a-9c2d-3e5f7a9b1c2d",
-  "version": "0.0.1-alpha.8",
+  "version": "0.0.1-alpha.11",
   "os": "darwin",
   "arch": "arm64",
   "harnesses": ["claude"],
@@ -39,9 +39,31 @@ prohibited classes below.
   `<home>/telemetry.json`. It is distinct from the local installation ID used
   inside the evidence store, is not derived from hardware, account, or OS
   identifiers, and changes if the state file is deleted.
-- `harnesses` lists only which of `claude` and `codex` are on `PATH`.
+- `os` is `runtime.GOOS` for the running build. Published builds send `darwin`
+  or `windows`. The receiver, which lives outside this repository, also accepts
+  `linux` so an unpublished engineering build is not rejected; `linux` is not a
+  supported platform.
+- `arch` is the Go runtime architecture: `arm64` for the published macOS build,
+  `amd64` for the published Windows build. A Windows arm64 engineering build
+  would send `arm64`. Neither value is a hardware identifier.
+- `harnesses` lists only which of `claude`, `codex`, `cursor`, and
+  `antigravity` are present. `claude` and `codex` are detected on `PATH`.
+  Cursor's CLI is not reliably on `PATH` and its names are too generic to
+  probe, so `cursor` is reported when `~/.cursor` (`%USERPROFILE%\.cursor` on
+  Windows) exists as a real directory; a symlink does not count. Antigravity
+  is likewise not probed on `PATH`: `antigravity` is reported when
+  `~/.gemini/antigravity` (`%USERPROFILE%\.gemini\antigravity` on Windows),
+  Antigravity 2.0's app-data root, exists as a real directory; a symlink does
+  not count. No path, name, or other field changes with either value. The
+  receiver lives outside this repository and is updated separately; it derives
+  one analytics property per harness from this array.
 - The receiver records the request's country from the CDN header and discards
-  the address. It stores one record per event, day, and telemetry ID.
+  the address. It stores one record per event, day, and telemetry ID, and
+  forwards the same fixed fields plus that country to a hosted analytics
+  processor (PostHog) keyed by the random telemetry ID, so Doplex can count
+  unique installs, active installs, and retention. The IP address is not
+  retained anywhere. This forwarding changes nothing in the payload Belay
+  sends.
 
 ## Prohibited
 
@@ -55,6 +77,13 @@ identifier.
 - `belay telemetry status` prints the enabled state, the ID, and the field
   list; `belay telemetry off` opts out; `belay telemetry on` opts back in.
 - `BELAY_TELEMETRY=0` (or `false`, `off`, `no`) disables sending.
+- `DO_NOT_TRACK=1` (or `true`, `yes`, `on`), the cross-tool convention, also
+  disables sending.
+- After the first successful send from a Belay home, `belay local` and
+  `belay quickstart` print a one-line `belay:` notice to stderr describing the
+  ping (including that it reports which of claude/codex/cursor/antigravity are
+  installed) and the off switch; it is printed once per home and never on
+  stdout.
 - Builds whose version is `dev` send nothing unless
   `BELAY_TELEMETRY_ENDPOINT` is set explicitly for testing.
 - Sending is fail-open with a five-second timeout; a failed send is retried on

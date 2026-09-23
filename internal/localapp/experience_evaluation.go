@@ -925,6 +925,10 @@ func evaluationHarness(agent string) experience.Harness {
 		return experience.HarnessClaude
 	case "codex":
 		return experience.HarnessCodex
+	case "cursor", "cursor-agent":
+		return experience.HarnessCursor
+	case "antigravity":
+		return experience.HarnessAntigravity
 	default:
 		return ""
 	}

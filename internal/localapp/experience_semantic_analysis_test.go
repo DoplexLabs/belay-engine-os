@@ -450,7 +450,7 @@ func TestAnalyzeExperienceCandidatesRejectsInvalidOutputWithoutWrites(
 			name: "unsupported harness",
 			mutate: func(value map[string]any) {
 				firstSemanticApplicability(value)["harnesses"] =
-					[]any{"cursor"}
+					[]any{"windsurf"}
 			},
 		},
 		{
@@ -1189,6 +1189,8 @@ func TestSemanticProposalHarnessesTransferRepositoryProcedures(t *testing.T) {
 		[]experience.Harness{
 			experience.HarnessClaude,
 			experience.HarnessCodex,
+			experience.HarnessCursor,
+			experience.HarnessAntigravity,
 		},
 	) {
 		t.Fatalf("repository procedure harnesses = %v", got)
@@ -1198,6 +1200,27 @@ func TestSemanticProposalHarnessesTransferRepositoryProcedures(t *testing.T) {
 	got = semanticProposalHarnesses(candidate, value)
 	if !reflect.DeepEqual(got, []experience.Harness{experience.HarnessCodex}) {
 		t.Fatalf("harness-specific procedure harnesses = %v", got)
+	}
+
+	value.Applicability.PathHints = []string{".cursor/rules/belay.mdc"}
+	value.Applicability.Harnesses = []experience.Harness{
+		experience.HarnessCursor,
+	}
+	got = semanticProposalHarnesses(candidate, value)
+	if !reflect.DeepEqual(got, []experience.Harness{experience.HarnessCursor}) {
+		t.Fatalf("Cursor-specific procedure harnesses = %v", got)
+	}
+
+	value.Applicability.PathHints = []string{".agents/rules/belay.md"}
+	value.Applicability.Harnesses = []experience.Harness{
+		experience.HarnessAntigravity,
+	}
+	got = semanticProposalHarnesses(candidate, value)
+	if !reflect.DeepEqual(
+		got,
+		[]experience.Harness{experience.HarnessAntigravity},
+	) {
+		t.Fatalf("Antigravity-specific procedure harnesses = %v", got)
 	}
 }
 
@@ -1668,5 +1691,144 @@ func TestExperienceSemanticPromptDoesNotUseFilesystemContent(t *testing.T) {
 	}
 	if bytes.Contains(prompt, []byte("FILESYSTEM_SECRET_CANARY")) {
 		t.Fatal("experience semantic prompt read unrelated filesystem content")
+	}
+}
+
+func TestExperienceSemanticOutputAcceptsCursorHarness(t *testing.T) {
+	candidate := experienceSemanticTestCandidate("cursor-harness")
+	schemaBody, err := experienceSemanticOutputSchema(
+		experienceSemanticPromptPayload{
+			Candidates: []experienceSemanticPromptCandidate{{
+				CandidateID:     candidate.CandidateID,
+				ProjectIdentity: candidate.ProjectIdentity,
+				Excerpts: boundedExperienceSemanticExcerpts(
+					candidate,
+				),
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema jsonschema.Schema
+	if err := json.Unmarshal(schemaBody, &schema); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := schema.Resolve(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(
+		experienceSemanticValidOutput(candidate),
+		&value,
+	); err != nil {
+		t.Fatal(err)
+	}
+	firstSemanticApplicability(value)["harnesses"] = []any{
+		"claude",
+		"codex",
+		"cursor",
+	}
+	if err := resolved.Validate(value); err != nil {
+		t.Fatalf("cursor harness rejected by output schema: %v", err)
+	}
+
+	firstSemanticApplicability(value)["harnesses"] = []any{"cursor"}
+	if err := resolved.Validate(value); err != nil {
+		t.Fatalf("cursor-only harness rejected by output schema: %v", err)
+	}
+}
+
+func TestExperienceSemanticPromptDescribesEveryHarness(t *testing.T) {
+	candidate := experienceSemanticTestCandidate("cursor-prompt")
+	_, prompt, _, _, _, err := prepareExperienceSemanticPrompt(
+		SemanticHarnessClaude,
+		[]experience.Candidate{candidate},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"include claude, codex, cursor, and antigravity",
+		"cursor for Cursor Agent",
+		"antigravity for Antigravity",
+	} {
+		if !strings.Contains(string(prompt), required) {
+			t.Fatalf("prompt missing harness description %q", required)
+		}
+	}
+}
+
+func TestSemanticProposalHarnessSpecificPathsCoverCursor(t *testing.T) {
+	for _, value := range []string{
+		"CLAUDE.md",
+		"AGENTS.md",
+		".claude/settings.json",
+		".codex/rules/default.rules",
+		".cursorrules",
+		".cursor/rules/belay.mdc",
+		".agents/rules/belay.md",
+		".agents/rules/other.md",
+		".agent/rules/belay.md",
+	} {
+		if !semanticProposalHarnessSpecificPath(value) {
+			t.Fatalf("%q was not treated as harness specific", value)
+		}
+	}
+	if semanticProposalHarnessSpecificPath("internal/example.go") {
+		t.Fatal("source path was treated as harness specific")
+	}
+}
+
+func TestExperienceSemanticOutputAcceptsAntigravityHarness(t *testing.T) {
+	candidate := experienceSemanticTestCandidate("antigravity-harness")
+	schemaBody, err := experienceSemanticOutputSchema(
+		experienceSemanticPromptPayload{
+			Candidates: []experienceSemanticPromptCandidate{{
+				CandidateID:     candidate.CandidateID,
+				ProjectIdentity: candidate.ProjectIdentity,
+				Excerpts: boundedExperienceSemanticExcerpts(
+					candidate,
+				),
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema jsonschema.Schema
+	if err := json.Unmarshal(schemaBody, &schema); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := schema.Resolve(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(
+		experienceSemanticValidOutput(candidate),
+		&value,
+	); err != nil {
+		t.Fatal(err)
+	}
+	firstSemanticApplicability(value)["harnesses"] = []any{
+		"claude",
+		"codex",
+		"cursor",
+		"antigravity",
+	}
+	if err := resolved.Validate(value); err != nil {
+		t.Fatalf("every harness rejected by output schema: %v", err)
+	}
+
+	firstSemanticApplicability(value)["harnesses"] = []any{"antigravity"}
+	if err := resolved.Validate(value); err != nil {
+		t.Fatalf("antigravity-only harness rejected by output schema: %v", err)
+	}
+
+	firstSemanticApplicability(value)["harnesses"] = []any{"windsurf"}
+	if err := resolved.Validate(value); err == nil {
+		t.Fatal("unsupported harness accepted by output schema")
 	}
 }

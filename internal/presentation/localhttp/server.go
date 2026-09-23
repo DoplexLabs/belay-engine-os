@@ -281,6 +281,7 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	writeReadResult(w, r, readmodel.SessionDetailWithDiagnosis{
 		SchemaVersion: detail.SchemaVersion,
 		Data:          detail.Data,
+		Episodes:      detail.Episodes,
 		Diagnosis:     s.read.DiagnoseSession(r.Context(), detail),
 		DataThrough:   detail.DataThrough,
 	}, nil)

@@ -314,6 +314,7 @@ func TestQueryCostIssuesOrdersKnownUSDThenSessions(t *testing.T) {
 	highUSD := 9.0
 	equalUSD := 4.0
 	lowUSD := 1.0
+	correctionUSD := 0.5
 	issues := []issueintel.Issue{
 		costIssueTestIssue(
 			"issue-unknown",
@@ -370,6 +371,28 @@ func TestQueryCostIssuesOrdersKnownUSDThenSessions(t *testing.T) {
 			&equalUSD,
 			"equal fewer",
 		),
+		costIssueTestIssue(
+			"issue-correction-single-session",
+			issueintel.DetectorRepeatedCorrection,
+			"correction-single",
+			project,
+			session,
+			8,
+			500,
+			&highUSD,
+			"single correction",
+		),
+		costIssueTestIssue(
+			"issue-correction-multi-session",
+			issueintel.DetectorRepeatedCorrection,
+			"correction-multi",
+			project,
+			session,
+			7,
+			400,
+			&correctionUSD,
+			"recurring correction",
+		),
 	}
 	issues[3].Sessions = append(
 		issues[3].Sessions,
@@ -381,6 +404,16 @@ func TestQueryCostIssuesOrdersKnownUSDThenSessions(t *testing.T) {
 		},
 	)
 	issues[3].SessionCount = 2
+	issues[6].Sessions = append(
+		issues[6].Sessions,
+		issueintel.SessionRef{
+			SessionKey: "ses-correction-second",
+			Agent:      "codex",
+			StartedAt:  session.StartedAt,
+			EndedAt:    session.EndedAt,
+		},
+	)
+	issues[6].SessionCount = 2
 	if err := store.ReplaceProjectIssueAnalysis(
 		ctx,
 		project,
@@ -399,7 +432,7 @@ func TestQueryCostIssuesOrdersKnownUSDThenSessions(t *testing.T) {
 		"issue-equal-more-sessions",
 		"issue-equal-fewer-sessions",
 		"issue-low",
-		"issue-unknown",
+		"issue-correction-multi-session",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("cost issue count = %d, want %d", len(got), len(want))
@@ -408,6 +441,36 @@ func TestQueryCostIssuesOrdersKnownUSDThenSessions(t *testing.T) {
 		if got[index].IssueID != want[index] {
 			t.Fatalf("cost issue order[%d] = %q, want %q", index, got[index].IssueID, want[index])
 		}
+	}
+	legacy, err := store.QueryCostIssues(ctx, CostIssueQuery{
+		Limit:         10,
+		RankingPolicy: issueintel.RankingPolicyLegacy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy) != len(issues) {
+		t.Fatalf("legacy ranking issue count = %d, want %d", len(legacy), len(issues))
+	}
+	retained, err := store.QueryCostIssues(ctx, CostIssueQuery{
+		Limit:      10,
+		DetectorID: issueintel.DetectorFileThrash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retained) != 1 || retained[0].IssueID != "issue-unknown" {
+		t.Fatalf("retained low-signal issues = %+v", retained)
+	}
+	retained, err = store.QueryCostIssues(ctx, CostIssueQuery{
+		Limit:      10,
+		DetectorID: issueintel.DetectorRepeatedCorrection,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retained) != 2 {
+		t.Fatalf("retained correction candidates = %+v", retained)
 	}
 }
 

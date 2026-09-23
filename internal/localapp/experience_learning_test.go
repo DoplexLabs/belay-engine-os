@@ -983,3 +983,84 @@ func TestExperienceLearningRejectsNonAbsoluteCWD(t *testing.T) {
 		t.Fatalf("relative cwd error = %v", err)
 	}
 }
+
+func TestExperienceLearningListBindsCursorHarness(t *testing.T) {
+	root := t.TempDir()
+	runExperienceLearningGit(t, root, "init", "-b", "main")
+	runExperienceLearningGit(
+		t,
+		root,
+		"remote",
+		"add",
+		"origin",
+		"https://example.test/team/project.git",
+	)
+	project := "https://example.test/team/project.git"
+	resolver := &experienceLearningTestResolver{
+		project: missionpack.ResolvedProject{
+			Identity:     project,
+			IdentityKind: "remote",
+			Path:         root,
+		},
+	}
+	items := make([]ExperienceApprovalPreview, 2)
+	for index := range items {
+		items[index].Review.ProjectIdentity = project
+		items[index].Review.SemanticProvenance.Harness =
+			experience.HarnessCursor
+		items[index].Review.Authority = experience.AuthorityNone
+	}
+	reviews := &experienceLearningTestReviews{items: items}
+	service := newExperienceLearningTestService(
+		t,
+		resolver,
+		&experienceLearningTestApproval{},
+		&experienceLearningTestLifecycle{},
+		&experienceLearningTestCompiler{},
+		reviews,
+		project,
+	)
+
+	result, err := service.List(
+		context.Background(),
+		root,
+		experience.HarnessCursor,
+		5,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 2 ||
+		reviews.harness != experience.HarnessCursor {
+		t.Fatalf("cursor list result/request = %+v/%+v", result, reviews)
+	}
+	if _, err := service.List(
+		context.Background(),
+		root,
+		experience.Harness("windsurf"),
+		5,
+		false,
+	); !errors.Is(err, ErrExperienceLearningInvalidRequest) {
+		t.Fatalf("unsupported harness error = %v", err)
+	}
+}
+
+func TestEvaluationHarnessRecognizesEverySupportedAgent(t *testing.T) {
+	for agent, want := range map[string]experience.Harness{
+		"claude":       experience.HarnessClaude,
+		"claude-code":  experience.HarnessClaude,
+		"codex":        experience.HarnessCodex,
+		"cursor":       experience.HarnessCursor,
+		"cursor-agent": experience.HarnessCursor,
+		"Cursor":       experience.HarnessCursor,
+		"antigravity":  experience.HarnessAntigravity,
+		"Antigravity":  experience.HarnessAntigravity,
+		"agy":          experience.Harness(""),
+		"windsurf":     experience.Harness(""),
+	} {
+		if got := evaluationHarness(agent); got != want {
+			t.Fatalf("evaluationHarness(%q) = %q, want %q", agent, got, want)
+		}
+	}
+}

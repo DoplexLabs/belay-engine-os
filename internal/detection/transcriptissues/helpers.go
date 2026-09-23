@@ -335,17 +335,22 @@ func observedBounds(turns ...transcript.Turn) (time.Time, time.Time) {
 	return first, last
 }
 
+// instructionTarget names the file a project's standing instructions belong in,
+// by which harness the project's sessions mostly come from. Cursor is counted
+// with Codex here: Cursor reads AGENTS.md, and it has no CLAUDE.md-equivalent
+// of its own, so a Cursor-heavy project should be steered to AGENTS.md rather
+// than left to the fallback by accident.
 func instructionTarget(project preparedProject) string {
-	claude, codex := 0, 0
+	claude, agents := 0, 0
 	for _, session := range project.sessions {
 		switch session.metadata.Agent {
 		case "claude-code":
 			claude++
-		case "codex":
-			codex++
+		case "codex", "cursor":
+			agents++
 		}
 	}
-	if claude > codex {
+	if claude > agents {
 		return "CLAUDE.md"
 	}
 	return "AGENTS.md"

@@ -57,6 +57,18 @@ func WithCostIssueRepository(repository CostIssueRepository) Option {
 	}
 }
 
+func WithCostIssueRankingPolicy(policy string) Option {
+	return func(service *Service) {
+		switch strings.TrimSpace(policy) {
+		case issueintel.RankingPolicyLegacy:
+			service.costIssueRankingPolicy = issueintel.RankingPolicyLegacy
+		default:
+			service.costIssueRankingPolicy =
+				issueintel.RankingPolicyDeterministic
+		}
+	}
+}
+
 func (s *Service) ListCostIssues(
 	ctx context.Context,
 	request CostIssueListRequest,
@@ -75,11 +87,12 @@ func (s *Service) ListCostIssues(
 		Limit:           request.Limit,
 		ProjectIdentity: request.ProjectIdentity,
 		DetectorID:      request.DetectorID,
+		RankingPolicy:   s.costIssueRankingPolicy,
 	})
 	if err != nil {
 		return CostIssueList{}, err
 	}
-	values = s.applyInsightFixes(ctx, values)
+	values = s.presentCostIssues(ctx, values)
 	return CostIssueList{
 		SchemaVersion: CostIssueProjectionVersion,
 		Data:          values,
@@ -105,7 +118,7 @@ func (s *Service) GetCostIssue(
 		}
 		return CostIssueDetail{}, err
 	}
-	values := s.applyInsightFixes(ctx, []issueintel.Issue{value})
+	values := s.presentCostIssues(ctx, []issueintel.Issue{value})
 	if len(values) == 1 {
 		value = values[0]
 	}
@@ -114,6 +127,37 @@ func (s *Service) GetCostIssue(
 		Data:          value,
 		GeneratedAt:   s.now().UTC(),
 	}, nil
+}
+
+func (s *Service) presentCostIssues(
+	ctx context.Context,
+	issues []issueintel.Issue,
+) []issueintel.Issue {
+	issues = s.applyInsightFixes(ctx, issues)
+	for index := range issues {
+		issues[index].EvidenceBasis = costIssueEvidenceBasis(issues[index])
+	}
+	return issues
+}
+
+func costIssueEvidenceBasis(issue issueintel.Issue) issueintel.EvidenceBasis {
+	switch {
+	case len(issue.EpisodeRefs) > 0:
+		return issueintel.EvidenceBasis{
+			Kind:    issueintel.EvidenceBasisActionSequence,
+			Summary: "Backed by a retained sequence of actions and outcomes.",
+		}
+	case len(issue.Excerpts) > 0:
+		return issueintel.EvidenceBasis{
+			Kind:    issueintel.EvidenceBasisTranscriptExcerpt,
+			Summary: "Backed by retained session excerpts with turn citations.",
+		}
+	default:
+		return issueintel.EvidenceBasis{
+			Kind:    issueintel.EvidenceBasisRetainedActivity,
+			Summary: "Detected from retained session activity; a verbatim excerpt is not available.",
+		}
+	}
 }
 
 func (s *Service) applyInsightFixes(

@@ -116,6 +116,8 @@ func TestMCPConfigInstallHelpExplainsCodexOptIn(t *testing.T) {
 		"allow-codex-mcp-add",
 		"non-atomic duplicate-name behavior",
 		"strict absence verification",
+		"cursor (~/.cursor/mcp.json)",
+		"antigravity (~/.gemini/config/mcp_config.json)",
 	} {
 		if !strings.Contains(stderr.String(), required) {
 			t.Fatalf("install help missing %q:\n%s", required, stderr.String())
@@ -145,6 +147,8 @@ func TestOnboardMCPConfigurationEmitsFixedPayloadFreeSummary(t *testing.T) {
 					Status:    "unverifiable",
 					ErrorCode: &code,
 				},
+				{Agent: "cursor", Status: "absent"},
+				{Agent: "antigravity", Status: "installed"},
 			},
 		}, errors.New("token=private-cli-output")
 	}
@@ -164,7 +168,7 @@ func TestOnboardMCPConfigurationEmitsFixedPayloadFreeSummary(t *testing.T) {
 		t.Fatal("onboarding reported complete")
 	}
 	if got := stderr.String(); got !=
-		"belay quickstart: mcp codex=already_installed claude=unverifiable\n" {
+		"belay quickstart: mcp codex=already_installed claude=unverifiable cursor=absent antigravity=installed\n" {
 		t.Fatalf("summary = %q", got)
 	}
 	if strings.Contains(stderr.String(), "private-cli-output") {
@@ -197,6 +201,8 @@ func TestStandaloneInstallCreatesStableIdentityReusedByQuickstart(t *testing.T) 
 			Targets: []localapp.MCPConfigTargetResult{
 				{Agent: "codex", Status: "skipped_not_detected"},
 				{Agent: "claude", Status: "skipped_not_detected"},
+				{Agent: "cursor", Status: "skipped_not_detected"},
+				{Agent: "antigravity", Status: "skipped_not_detected"},
 			},
 		}, nil
 	}

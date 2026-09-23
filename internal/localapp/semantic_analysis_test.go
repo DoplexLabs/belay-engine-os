@@ -726,7 +726,7 @@ func TestSemanticPromptIsHarnessAwareAndVersioned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if InsightPromptVersion != "belay.insight-prompt.v4" {
+	if InsightPromptVersion != "belay.insight-prompt.v5" {
 		t.Fatalf("prompt version = %q", InsightPromptVersion)
 	}
 	if !bytes.Contains(claudePrompt, []byte("prefer CLAUDE.md")) ||
@@ -1278,5 +1278,53 @@ func semanticTestInput() issueintel.SemanticInput {
 			Marker:     "no",
 			OccurredAt: now,
 		}},
+	}
+}
+
+func TestSemanticHarnessDescribesCursorAndPrefersAgentsFile(t *testing.T) {
+	if !SemanticHarnessCursor.Valid() {
+		t.Fatal("cursor is not a valid semantic harness")
+	}
+	for harness, want := range map[SemanticHarness]string{
+		SemanticHarnessClaude: "Claude Code",
+		SemanticHarnessCodex:  "Codex",
+		SemanticHarnessCursor: "Cursor Agent",
+	} {
+		if got := semanticHarnessLabel(harness); got != want {
+			t.Fatalf("semanticHarnessLabel(%q) = %q, want %q", harness, got, want)
+		}
+	}
+	for harness, want := range map[SemanticHarness]string{
+		SemanticHarnessClaude: "CLAUDE.md",
+		SemanticHarnessCodex:  "AGENTS.md",
+		SemanticHarnessCursor: "AGENTS.md",
+	} {
+		if got := semanticPreferredTarget(harness); got != want {
+			t.Fatalf("semanticPreferredTarget(%q) = %q, want %q", harness, got, want)
+		}
+	}
+
+	cursorPrompt, _, cursorHash, err := semanticPrompt(
+		SemanticHarnessCursor,
+		semanticTestInput(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(
+		cursorPrompt,
+		[]byte("in this Cursor Agent analysis, prefer AGENTS.md"),
+	) {
+		t.Fatalf("cursor prompt = %s", cursorPrompt)
+	}
+	_, _, codexHash, err := semanticPrompt(
+		SemanticHarnessCodex,
+		semanticTestInput(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursorHash == codexHash {
+		t.Fatal("cursor and codex prompts shared a provenance hash")
 	}
 }

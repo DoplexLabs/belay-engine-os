@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DoplexLabs/belay-engine/internal/evidenceepisode"
 	"github.com/DoplexLabs/belay-engine/internal/experience"
 	"github.com/DoplexLabs/belay-engine/internal/storage/local"
 	"github.com/DoplexLabs/belay-engine/internal/trajectory"
@@ -18,6 +19,7 @@ type candidateCompilationTestStore struct {
 	edges      map[string][]trajectory.Edge
 	outcomes   map[string][]trajectory.Outcome
 	candidates map[string]experience.Candidate
+	episodes   map[string]evidenceepisode.Episode
 }
 
 func (store *candidateCompilationTestStore) QueryTranscriptSessions(
@@ -69,6 +71,26 @@ func (store *candidateCompilationTestStore) InsertExperienceCandidate(
 		return false, nil
 	}
 	store.candidates[candidate.CandidateID] = candidate
+	return true, nil
+}
+
+func (store *candidateCompilationTestStore) InsertEvidenceEpisode(
+	_ context.Context,
+	value evidenceepisode.Episode,
+) (bool, error) {
+	if err := value.Validate(); err != nil {
+		return false, err
+	}
+	if store.episodes == nil {
+		store.episodes = make(map[string]evidenceepisode.Episode)
+	}
+	if previous, exists := store.episodes[value.EpisodeID]; exists {
+		if !reflect.DeepEqual(previous, value) {
+			return false, local.ErrEvidenceEpisodeConflict
+		}
+		return false, nil
+	}
+	store.episodes[value.EpisodeID] = value
 	return true, nil
 }
 

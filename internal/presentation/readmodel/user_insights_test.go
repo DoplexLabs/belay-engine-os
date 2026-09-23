@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DoplexLabs/belay-engine/internal/evidenceepisode"
+	"github.com/DoplexLabs/belay-engine/internal/issueintel"
 	"github.com/DoplexLabs/belay-engine/internal/transcript"
 	"github.com/DoplexLabs/belay-engine/internal/userinsights"
 )
@@ -17,6 +19,32 @@ type userInsightRepository struct {
 	turns      map[string][]transcript.Turn
 	turnErrors map[string]error
 	turnLimits []int
+}
+
+type userInsightEpisodeRepository struct {
+	values map[string][]evidenceepisode.Episode
+}
+
+func (repository userInsightEpisodeRepository) QuerySessionEvidenceEpisodes(
+	_ context.Context,
+	sessionKey string,
+	_ int,
+) ([]evidenceepisode.Episode, error) {
+	return repository.values[sessionKey], nil
+}
+
+func (repository userInsightEpisodeRepository) QueryEvidenceEpisodesForSessions(
+	_ context.Context,
+	sessionKeys []string,
+	_ int,
+) (map[string][]evidenceepisode.Episode, error) {
+	result := make(map[string][]evidenceepisode.Episode)
+	for _, sessionKey := range sessionKeys {
+		if values := repository.values[sessionKey]; len(values) > 0 {
+			result[sessionKey] = values
+		}
+	}
+	return result, nil
 }
 
 func (repository *userInsightRepository) TranscriptCoverage(
@@ -134,6 +162,23 @@ func TestGetUserInsightsBuildsSafeDebriefsForCompleteSessions(t *testing.T) {
 		issueTestCoreRepository{},
 		WithClock(func() time.Time { return now }),
 		WithTranscriptRepository(repository),
+		WithEvidenceEpisodeRepository(userInsightEpisodeRepository{
+			values: map[string][]evidenceepisode.Episode{
+				"ses_recent": {
+					{
+						EpisodeID: "eep_safe_signal",
+						Kind:      evidenceepisode.KindFailureRepair,
+						FirstTurn: 2,
+						LastTurn:  7,
+						Cost: issueintel.Cost{
+							WastedMinutes: 6,
+							WastedTokens:  1200,
+						},
+						FailureSignature: "SECRET_TOKEN=do-not-expose",
+					},
+				},
+			},
+		}),
 	)
 
 	response, err := service.GetUserInsights(context.Background(), UserInsightsRequest{Limit: 1})
@@ -161,6 +206,11 @@ func TestGetUserInsightsBuildsSafeDebriefsForCompleteSessions(t *testing.T) {
 	if len(debrief.Findings) == 0 || debrief.Findings[0].Kind != userinsights.FindingLateVerification {
 		t.Fatalf("expected the late verification finding first: %+v", debrief.Findings)
 	}
+	if len(debrief.Signals) != 1 ||
+		debrief.Signals[0].EpisodeID != "eep_safe_signal" ||
+		debrief.Signals[0].Title != "A failed command was recovered" {
+		t.Fatalf("expected one safe deterministic signal: %+v", debrief.Signals)
+	}
 	if response.Coverage.CandidateSessions != 6 || response.Coverage.EvaluatedSessions != 1 ||
 		!response.Coverage.HasMore {
 		t.Fatalf("unexpected coverage: %+v", response.Coverage)
@@ -178,6 +228,7 @@ func TestGetUserInsightsBuildsSafeDebriefsForCompleteSessions(t *testing.T) {
 		"/Users/private",
 		"go test",
 		"secret/billing.go",
+		"do-not-expose",
 		"run the tests first",
 	} {
 		if strings.Contains(string(encoded), forbidden) {

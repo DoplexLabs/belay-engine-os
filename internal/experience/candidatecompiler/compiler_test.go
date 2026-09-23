@@ -222,6 +222,16 @@ func TestCompileSuccessfulProcedureRequiresVerificationPassAndMutationSequence(t
 		got.Candidates[0].Proposal.Verifier.Kind != experience.VerifierCommandSucceeded {
 		t.Fatalf("successful procedure candidates = %+v", got.Candidates)
 	}
+	if len(got.SuccessfulProcedureEpisodes) != 1 ||
+		got.SuccessfulProcedureEpisodes[0].CandidateID !=
+			got.Candidates[0].CandidateID ||
+		got.SuccessfulProcedureEpisodes[0].Anchor.RawCommand !=
+			"go test ./..." {
+		t.Fatalf(
+			"successful procedure episode = %+v",
+			got.SuccessfulProcedureEpisodes,
+		)
+	}
 	contextIndexes := map[int64]bool{}
 	for _, ref := range got.Candidates[0].Evidence.Refs {
 		if ref.TurnIndex != nil {
@@ -415,6 +425,18 @@ func TestCompileFailedApproachRequiresExplicitFailureAndRepair(t *testing.T) {
 	if len(got.Candidates) != 1 ||
 		got.Candidates[0].Family != experience.CandidateFailedApproach {
 		t.Fatalf("failed approach candidates = %+v", got.Candidates)
+	}
+	if len(got.FailedApproachRecoveries) != 1 ||
+		got.FailedApproachRecoveries[0].CandidateID !=
+			got.Candidates[0].CandidateID ||
+		got.FailedApproachRecoveries[0].FailureResult.TurnID !=
+			failureResult.TurnID ||
+		got.FailedApproachRecoveries[0].SuccessResult.TurnID !=
+			successResult.TurnID {
+		t.Fatalf(
+			"failed approach recoveries = %+v",
+			got.FailedApproachRecoveries,
+		)
 	}
 
 	withoutRepair, err := Compile(Input{

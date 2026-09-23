@@ -72,12 +72,15 @@ func (s *Service) GetReport(ctx context.Context) (Report, error) {
 	}
 	top, err := s.costIssueRepository.QueryCostIssues(
 		ctx,
-		issueintel.Query{Limit: 5},
+		issueintel.Query{
+			Limit:         5,
+			RankingPolicy: s.costIssueRankingPolicy,
+		},
 	)
 	if err != nil {
 		return Report{}, err
 	}
-	top = s.applyInsightFixes(ctx, top)
+	top = s.presentCostIssues(ctx, top)
 	issueCosts, err := s.reportRepository.ReadCostIssueTotals(ctx)
 	if err != nil {
 		return Report{}, err

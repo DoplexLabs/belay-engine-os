@@ -697,6 +697,12 @@ func TestRetainedVerificationGapHistoricalAndLiveSemantics(t *testing.T) {
 			absence:    AbsenceSupported,
 		},
 		{
+			name:       "compatible Cursor live",
+			input:      build("cursor", false),
+			confidence: ConfidenceMedium,
+			absence:    AbsenceSupported,
+		},
+		{
 			name:       "historical retained evidence",
 			input:      build("codex", true),
 			confidence: ConfidenceLow,
@@ -720,6 +726,33 @@ func TestRetainedVerificationGapHistoricalAndLiveSemantics(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRetainedVerificationGapStaysSilentForUnverifiedAntigravityHooks pins
+// that a live Antigravity session with a mutation and a lifecycle terminal
+// produces no absence-based match: Belay has not verified that Antigravity's
+// Numbat hooks deliver lifecycle terminals or approval streams.
+func TestRetainedVerificationGapStaysSilentForUnverifiedAntigravityHooks(
+	t *testing.T,
+) {
+	mutation := testEvent("mutation", 1, "file.write")
+	mutation.Source.Agent = "antigravity"
+	terminal := testEvent("terminal", 2, "session.end")
+	terminal.Source.Agent = "antigravity"
+	terminal.Coverage.Depth = "lifecycle"
+
+	result := DefaultCatalog().Run(
+		context.Background(),
+		testInput(mutation, terminal),
+	)
+	requireCurrent(t, result)
+	if match, ok := findMatch(
+		t,
+		result,
+		"retained_verification_gap_after_changes",
+	); ok {
+		t.Fatalf("unverified Antigravity session produced %+v", match)
 	}
 }
 
@@ -1069,4 +1102,54 @@ func withHistorical(event model.Event) model.Event {
 	event.Historical.IsHistorical = true
 	event.Coverage.Depth = "artifact"
 	return event
+}
+
+func TestHarnessProvidesHookCoverageGatesAbsenceOnKnownHarnesses(t *testing.T) {
+	for _, test := range []struct {
+		agent string
+		want  bool
+	}{
+		{agent: "codex", want: true},
+		{agent: "claude-code", want: true},
+		{agent: "cursor", want: true},
+		{agent: "claude", want: false},
+		{agent: "future-agent", want: false},
+		{agent: "", want: false},
+		// Antigravity hooks are unverified for lifecycle terminals and
+		// approval streams; absence-based detectors must stay silent.
+		{agent: "antigravity", want: false},
+	} {
+		t.Run(test.agent, func(t *testing.T) {
+			if got := harnessProvidesHookCoverage(test.agent); got != test.want {
+				t.Fatalf("harnessProvidesHookCoverage(%q) = %v, want %v", test.agent, got, test.want)
+			}
+		})
+	}
+}
+
+func TestPermissionAbsenceCapabilityCoversCursorHooks(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		agent string
+		want  AbsenceCapability
+	}{
+		{name: "cursor hook", agent: "cursor", want: AbsenceSupported},
+		{name: "codex hook", agent: "codex", want: AbsenceSupported},
+		{name: "antigravity hook", agent: "antigravity", want: AbsenceNotApplicable},
+		{name: "unknown harness hook", agent: "future-agent", want: AbsenceNotApplicable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			event := testEvent("permission", 1, "permission.denied")
+			event.Source.Agent = test.agent
+			event.Source.Kind = "hook"
+			session, err := prepareSession(context.Background(), testInput(event))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := permissionAbsenceCapability(session)
+			if got != test.want {
+				t.Fatalf("permissionAbsenceCapability(%q) = %q, want %q", test.agent, got, test.want)
+			}
+		})
+	}
 }

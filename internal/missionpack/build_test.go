@@ -884,6 +884,36 @@ func TestBuildRenderedMarkdownOmitsIssueAndFingerprintIdentifiers(t *testing.T) 
 	}
 }
 
+func TestBuildEpisodeBackedKnownTrapRetainsSharedEpisodeReference(
+	t *testing.T,
+) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	input := testBuildInput(now)
+	issue := testIssue("csi_episode", "A failed command recovered.", 3, 1, now)
+	issue.EpisodeRefs = []string{"eep_recovery"}
+	input.Request.IssueID = issue.IssueID
+	input.Issues = []issueintel.Issue{issue}
+
+	pack, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pack.KnownTraps) != 1 {
+		t.Fatalf("known traps = %#v", pack.KnownTraps)
+	}
+	var episodeSource, transcriptSource bool
+	for _, source := range pack.KnownTraps[0].Sources {
+		episodeSource = episodeSource ||
+			(source.Kind == "evidence_episode" &&
+				source.EpisodeID == "eep_recovery")
+		transcriptSource = transcriptSource ||
+			(source.Kind == "cost_issue" && source.TurnIndex != nil)
+	}
+	if !episodeSource || !transcriptSource {
+		t.Fatalf("known trap sources = %#v", pack.KnownTraps[0].Sources)
+	}
+}
+
 func TestBuildMarksStaleInsightAndOmitsAbsentTimestamps(t *testing.T) {
 	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	input := testBuildInput(now)
@@ -1082,6 +1112,220 @@ func TestBuildAdaptsClaudeInsightForCodex(t *testing.T) {
 	}
 }
 
+func TestBuildAdaptsClaudeInsightForCursor(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	input := testBuildInput(now)
+	input.Request.Harness = HarnessCursor
+	input.Request.TaskHint = "verification"
+	issue := testIssue("issue_cursor_insight", "", 12, 3, now)
+	input.Issues = []issueintel.Issue{issue}
+	input.Insight = &issueintel.InsightRecord{
+		InsightID:   "insight_claude_for_cursor",
+		Harness:     "claude",
+		GeneratedAt: now,
+		Result: issueintel.InsightResult{
+			Fixes: []issueintel.InsightFix{{
+				IssueID:    issue.IssueID,
+				RuleText:   "Run verification after the final edit.",
+				TargetFile: "CLAUDE.md",
+				Confidence: 0.95,
+			}},
+		},
+	}
+
+	pack, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pack.Harness != HarnessCursor ||
+		len(pack.OperatingRules) != 1 ||
+		pack.OperatingRules[0].TargetFile != "AGENTS.md" {
+		t.Fatalf("Cursor pack = %#v", pack)
+	}
+	if strings.Contains(pack.RenderedMarkdown, "CLAUDE.md") {
+		t.Fatalf("Cursor pack markdown named CLAUDE.md: %s", pack.RenderedMarkdown)
+	}
+}
+
+func TestBuildSuppressesClaudeSettingsForCursor(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	input := testBuildInput(now)
+	input.Request.Harness = HarnessCursor
+	input.Request.TaskHint = "verified"
+	issue := testIssue("issue_cursor_settings", "", 12, 3, now)
+	input.Issues = []issueintel.Issue{issue}
+	input.Insight = &issueintel.InsightRecord{
+		InsightID:   "insight_settings_for_cursor",
+		Harness:     "claude",
+		GeneratedAt: now,
+		Result: issueintel.InsightResult{
+			Fixes: []issueintel.InsightFix{{
+				IssueID:    issue.IssueID,
+				RuleText:   "Allow the verified command.",
+				TargetFile: ".claude/settings.json",
+				Confidence: 0.95,
+			}},
+		},
+	}
+
+	pack, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pack.OperatingRules) != 0 {
+		t.Fatalf("incompatible Cursor operating rules = %#v", pack.OperatingRules)
+	}
+}
+
+func TestBuildAdaptsClaudeInsightForAntigravity(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	input := testBuildInput(now)
+	input.Request.Harness = HarnessAntigravity
+	input.Request.TaskHint = "verification"
+	issue := testIssue("issue_antigravity_insight", "", 12, 3, now)
+	input.Issues = []issueintel.Issue{issue}
+	input.Insight = &issueintel.InsightRecord{
+		InsightID:   "insight_claude_for_antigravity",
+		Harness:     "claude",
+		GeneratedAt: now,
+		Result: issueintel.InsightResult{
+			Fixes: []issueintel.InsightFix{{
+				IssueID:    issue.IssueID,
+				RuleText:   "Run verification after the final edit.",
+				TargetFile: "CLAUDE.md",
+				Confidence: 0.95,
+			}},
+		},
+	}
+
+	pack, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pack.Harness != HarnessAntigravity ||
+		len(pack.OperatingRules) != 1 ||
+		pack.OperatingRules[0].TargetFile != ".agents/rules/belay.md" {
+		t.Fatalf("Antigravity pack = %#v", pack)
+	}
+	for _, forbidden := range []string{"CLAUDE.md", "AGENTS.md"} {
+		if strings.Contains(pack.RenderedMarkdown, forbidden) {
+			t.Fatalf(
+				"Antigravity pack markdown named %s: %s",
+				forbidden,
+				pack.RenderedMarkdown,
+			)
+		}
+	}
+}
+
+func TestBuildAdaptsCodexInsightForAntigravity(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	input := testBuildInput(now)
+	input.Request.Harness = HarnessAntigravity
+	input.Request.TaskHint = "verification"
+	issue := testIssue("issue_antigravity_codex", "", 12, 3, now)
+	input.Issues = []issueintel.Issue{issue}
+	input.Insight = &issueintel.InsightRecord{
+		InsightID:   "insight_codex_for_antigravity",
+		Harness:     "codex",
+		GeneratedAt: now,
+		Result: issueintel.InsightResult{
+			Fixes: []issueintel.InsightFix{{
+				IssueID:    issue.IssueID,
+				RuleText:   "Run verification after the final edit.",
+				TargetFile: ".codex/rules/default.rules",
+				Confidence: 0.95,
+			}},
+		},
+	}
+
+	pack, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pack.OperatingRules) != 1 ||
+		pack.OperatingRules[0].TargetFile != ".agents/rules/belay.md" {
+		t.Fatalf("Antigravity pack rules = %#v", pack.OperatingRules)
+	}
+	if strings.Contains(pack.RenderedMarkdown, ".codex/") {
+		t.Fatalf(
+			"Antigravity pack markdown named a Codex path: %s",
+			pack.RenderedMarkdown,
+		)
+	}
+}
+
+func TestBuildAdaptsAntigravityInsightForClaude(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	input := testBuildInput(now)
+	input.Request.Harness = HarnessClaude
+	input.Request.TaskHint = "verification"
+	issue := testIssue("issue_claude_from_antigravity", "", 12, 3, now)
+	input.Issues = []issueintel.Issue{issue}
+	input.Insight = &issueintel.InsightRecord{
+		InsightID:   "insight_antigravity_for_claude",
+		Harness:     "antigravity",
+		GeneratedAt: now,
+		Result: issueintel.InsightResult{
+			Fixes: []issueintel.InsightFix{{
+				IssueID:    issue.IssueID,
+				RuleText:   "Run verification after the final edit.",
+				TargetFile: ".agents/rules/belay.md",
+				Confidence: 0.95,
+			}},
+		},
+	}
+
+	pack, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pack.Harness != HarnessClaude ||
+		len(pack.OperatingRules) != 1 ||
+		pack.OperatingRules[0].TargetFile != "CLAUDE.md" {
+		t.Fatalf("Claude pack from Antigravity insight = %#v", pack)
+	}
+	if strings.Contains(pack.RenderedMarkdown, ".agents/") {
+		t.Fatalf(
+			"Claude pack markdown named an Antigravity path: %s",
+			pack.RenderedMarkdown,
+		)
+	}
+}
+
+func TestBuildSuppressesClaudeSettingsForAntigravity(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	input := testBuildInput(now)
+	input.Request.Harness = HarnessAntigravity
+	input.Request.TaskHint = "verified"
+	issue := testIssue("issue_antigravity_settings", "", 12, 3, now)
+	input.Issues = []issueintel.Issue{issue}
+	input.Insight = &issueintel.InsightRecord{
+		InsightID:   "insight_settings_for_antigravity",
+		Harness:     "claude",
+		GeneratedAt: now,
+		Result: issueintel.InsightResult{
+			Fixes: []issueintel.InsightFix{{
+				IssueID:    issue.IssueID,
+				RuleText:   "Allow the verified command.",
+				TargetFile: ".claude/settings.json",
+				Confidence: 0.95,
+			}},
+		},
+	}
+
+	pack, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pack.OperatingRules) != 0 {
+		t.Fatalf(
+			"incompatible Antigravity operating rules = %#v",
+			pack.OperatingRules,
+		)
+	}
+}
+
 func TestBuildSuppressesTargetWithoutSafeHarnessEquivalent(t *testing.T) {
 	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	input := testBuildInput(now)
@@ -1122,13 +1366,32 @@ func TestSemanticTargetsAreSafeForSelectedHarness(t *testing.T) {
 	}{
 		{"Claude instructions", HarnessClaude, "CLAUDE.md", "CLAUDE.md", true},
 		{"Claude settings", HarnessClaude, ".claude/settings.json", ".claude/settings.json", true},
-		{"Codex instructions to Claude", HarnessClaude, "AGENTS.md", "CLAUDE.md", true},
+		{"Codex or Cursor instructions to Claude", HarnessClaude, "AGENTS.md", "CLAUDE.md", true},
 		{"Codex rules to Claude", HarnessClaude, ".codex/rules/default.rules", "CLAUDE.md", true},
 		{"Codex instructions", HarnessCodex, "AGENTS.md", "AGENTS.md", true},
 		{"Codex rules", HarnessCodex, ".codex/rules/default.rules", ".codex/rules/default.rules", true},
 		{"Claude instructions to Codex", HarnessCodex, "CLAUDE.md", "AGENTS.md", true},
 		{"Claude settings to Codex", HarnessCodex, ".claude/settings.json", "", false},
+		{"Cursor instructions", HarnessCursor, "AGENTS.md", "AGENTS.md", true},
+		{"Claude instructions to Cursor", HarnessCursor, "CLAUDE.md", "AGENTS.md", true},
+		{"Codex rules to Cursor", HarnessCursor, ".codex/rules/default.rules", "AGENTS.md", true},
+		{"Claude settings to Cursor", HarnessCursor, ".claude/settings.json", "", false},
 		{"Unknown target", HarnessClaude, ".cursorrules", "", false},
+		{"Unknown Cursor target", HarnessCursor, ".cursorrules", "", false},
+		{"Antigravity rules", HarnessAntigravity, ".agents/rules/belay.md", ".agents/rules/belay.md", true},
+		{"Codex instructions to Antigravity", HarnessAntigravity, "AGENTS.md", ".agents/rules/belay.md", true},
+		{"Claude instructions to Antigravity", HarnessAntigravity, "CLAUDE.md", ".agents/rules/belay.md", true},
+		{"Codex rules to Antigravity", HarnessAntigravity, ".codex/rules/default.rules", ".agents/rules/belay.md", true},
+		{"Claude settings to Antigravity", HarnessAntigravity, ".claude/settings.json", "", false},
+		{"Unknown Antigravity target", HarnessAntigravity, ".cursorrules", "", false},
+		{"Legacy Antigravity rules dir", HarnessAntigravity, ".agent/rules/belay.md", "", false},
+		{"Foreign Antigravity rule file", HarnessAntigravity, ".agents/rules/other.md", "", false},
+		{"Antigravity rules to Claude", HarnessClaude, ".agents/rules/belay.md", "CLAUDE.md", true},
+		{"Antigravity rules to Codex", HarnessCodex, ".agents/rules/belay.md", "AGENTS.md", true},
+		{"Antigravity rules to Cursor", HarnessCursor, ".agents/rules/belay.md", "AGENTS.md", true},
+		{"Foreign Antigravity rule file to Claude", HarnessClaude, ".agents/rules/other.md", "", false},
+		{"Legacy Antigravity rules dir to Codex", HarnessCodex, ".agent/rules/belay.md", "", false},
+		{"Unset harness", "", "AGENTS.md", "", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1196,10 +1459,18 @@ func TestBuildRejectsInvalidHarness(t *testing.T) {
 		0,
 		time.UTC,
 	))
-	input.Request.Harness = Harness("cursor")
+	input.Request.Harness = Harness("windsurf")
 	if _, err := Build(input); err == nil ||
 		!strings.Contains(err.Error(), "harness") {
 		t.Fatalf("Build() error = %v", err)
+	}
+	input.Request.Harness = HarnessCursor
+	if _, err := Build(input); err != nil {
+		t.Fatalf("Build() with Cursor harness error = %v", err)
+	}
+	input.Request.Harness = HarnessAntigravity
+	if _, err := Build(input); err != nil {
+		t.Fatalf("Build() with Antigravity harness error = %v", err)
 	}
 }
 

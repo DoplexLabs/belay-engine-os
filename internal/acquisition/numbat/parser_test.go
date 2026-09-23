@@ -36,6 +36,30 @@ func TestParseFindingCitedEventIDLimit(t *testing.T) {
 	}
 }
 
+func TestParseSessionLinkV040(t *testing.T) {
+	body := []byte(`{
+		"schema_version":"0.4.0",
+		"record_type":"session_link",
+		"run_id":"run-lineage",
+		"endpoint":{"os":"darwin","arch":"arm64"},
+		"link_id":"sl-e12b40b1ba4c8c398f955732be9cd2f9",
+		"source_agent":"claude-code",
+		"left":{"namespace":"hook","session_id":"hook-session"},
+		"right":{"namespace":"artifact","session_id":"artifact-session"},
+		"relationship":"hook_artifact_alias",
+		"confidence":"high",
+		"source_refs":["hook_payload:artifact_path"]
+	}`)
+	record, err := ParseLine(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, ok := record.(SessionLinkRecord)
+	if !ok || link.Right.SessionID != "artifact-session" {
+		t.Fatalf("record = %#v", record)
+	}
+}
+
 func validFindingRecordForLimitTest() map[string]any {
 	return map[string]any{
 		"schema_version":  SchemaVersion,
