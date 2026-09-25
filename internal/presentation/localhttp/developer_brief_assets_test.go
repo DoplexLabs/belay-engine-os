@@ -17,6 +17,7 @@ func TestDeveloperBriefBrowserShellAndDefaultView(t *testing.T) {
 		`id="brief-recent-list"`,
 		`id="brief-agent-summary"`,
 		`id="brief-coverage"`,
+		`<section class="brief-section" aria-labelledby="brief-actions-heading">`,
 		`id="report-sparkline"`,
 		`>What keeps going wrong</h2>`,
 		`>Fixes</h2>`,
