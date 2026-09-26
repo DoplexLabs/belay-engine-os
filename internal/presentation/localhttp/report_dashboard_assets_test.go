@@ -17,6 +17,9 @@ func TestReportDashboardHidesPatternsAndShowsDebriefs(t *testing.T) {
 		`id="report-habit-summary" hidden`,
 		`id="report-habits-empty" hidden`,
 		`class="brief-summary report-stats"`,
+		`id="report-coverage-summary"`,
+		`id="report-coverage-status"`,
+		`How much activity was reviewed?`,
 		`aria-labelledby="brief-actions-heading" hidden`,
 		`aria-labelledby="brief-recent-heading" hidden`,
 		`aria-labelledby="brief-agents-heading" hidden`,
@@ -48,6 +51,8 @@ func TestReportDashboardHidesPatternsAndShowsDebriefs(t *testing.T) {
 		`"Read the full debrief"`,
 		`in the background.`,
 		`"Your recent sessions at a glance"`,
+		`function renderReportCoverageSummary(about, totals)`,
+		`A quiet report may reflect limited capture.`,
 	} {
 		if !strings.Contains(app, required) {
 			t.Errorf("Report dashboard browser contract is missing %q", required)

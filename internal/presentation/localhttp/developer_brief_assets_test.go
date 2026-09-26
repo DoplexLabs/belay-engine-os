@@ -50,6 +50,7 @@ func TestDeveloperBriefBrowserContractAndBounds(t *testing.T) {
 		`await apiGet("/v1/report")`,
 		`"belay.report.v1"`,
 		`brief.top_issues.slice(0, 5)`,
+		`elements.briefActionsSection.hidden = false;`,
 		`fixes.slice(0, 20)`,
 		`No recurring issues detected yet`,
 		`No fixes recorded yet`,

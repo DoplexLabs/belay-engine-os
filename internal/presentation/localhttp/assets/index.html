@@ -1,20 +1,21 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light">
-    <meta name="theme-color" content="#f6f5f0">
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f6f5f0" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <meta
       name="description"
       content="Belay Local session browser for private, on-device agent activity."
-    >
+    />
     <title>Belay Local</title>
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./styles.css" />
     <script src="./bootstrap.js"></script>
     <script src="./app.js" defer></script>
   </head>
+
   <body data-experience="current">
     <div class="app-shell" id="app-shell" data-experience="current">
       <header class="topbar">
@@ -38,18 +39,10 @@
           >
             <span id="nav-brief-label">Report</span>
           </button>
-          <button
-            class="primary-nav-button"
-            id="nav-habits"
-            type="button"
-          >
+          <button class="primary-nav-button" id="nav-habits" type="button">
             <span id="nav-habits-label">Habits</span>
           </button>
-          <button
-            class="primary-nav-button"
-            id="nav-sessions"
-            type="button"
-          >
+          <button class="primary-nav-button" id="nav-sessions" type="button">
             <span id="nav-sessions-label">Sessions</span>
           </button>
           <button
@@ -67,8 +60,7 @@
           class="privacy-note"
           title="Full transcripts are encrypted on this machine and never uploaded"
         >
-          <span class="privacy-dot" aria-hidden="true"></span>
-          Local · encrypted
+          <span class="privacy-dot" aria-hidden="true"></span> Local · encrypted
         </div>
 
         <button
@@ -107,8 +99,12 @@
             <header class="brief-header">
               <div>
                 <p class="eyebrow" id="brief-eyebrow">Belay Report</p>
-                <h1 id="brief-heading" tabindex="-1">Your recent sessions at a glance</h1>
-                <p id="brief-window">Across your retained Claude Code and Codex sessions</p>
+                <h1 id="brief-heading" tabindex="-1">
+                  Your recent sessions at a glance
+                </h1>
+                <p id="brief-window">
+                  Across your retained Claude Code and Codex sessions
+                </p>
               </div>
               <p
                 class="brief-status"
@@ -126,7 +122,8 @@
             <div class="brief-error" id="brief-error" role="alert" hidden>
               <h2 id="brief-error-title">Report unavailable</h2>
               <p id="brief-error-detail">
-                Belay could not prepare the report. Habits and Sessions remain available.
+                Belay could not prepare the report. Habits and Sessions remain
+                available.
               </p>
               <button class="secondary-button" id="brief-retry" type="button">
                 Try again
@@ -134,14 +131,20 @@
             </div>
 
             <div class="brief-content" id="brief-content" hidden>
-              <section class="brief-section report-usage" aria-labelledby="report-usage-heading">
+              <section
+                class="brief-section report-usage"
+                aria-labelledby="report-usage-heading"
+              >
                 <div class="brief-section-heading">
                   <div>
                     <p class="eyebrow">All retained activity</p>
                     <h2 id="report-usage-heading">Usage overview</h2>
                   </div>
                 </div>
-                <div class="brief-summary report-stats" aria-label="All-time usage summary">
+                <div
+                  class="brief-summary report-stats"
+                  aria-label="All-time usage summary"
+                >
                   <dl>
                     <div>
                       <dt>Sessions</dt>
@@ -165,7 +168,9 @@
                     </div>
                   </dl>
                   <div class="report-spark-wrap">
-                    <p class="report-spark-label">Sessions per week, last 12 weeks</p>
+                    <p class="report-spark-label">
+                      Sessions per week, last 12 weeks
+                    </p>
                     <div
                       class="report-sparkline"
                       id="report-sparkline"
@@ -176,28 +181,89 @@
                 </div>
               </section>
 
-              <section class="brief-section report-habits" aria-labelledby="report-habits-heading">
+              <section
+                class="report-coverage-summary"
+                id="report-coverage-summary"
+                aria-labelledby="report-coverage-heading"
+              >
+                <div>
+                  <p class="eyebrow">Evidence coverage</p>
+                  <h2 id="report-coverage-heading">
+                    How much activity was reviewed?
+                  </h2>
+                  <p
+                    id="report-coverage-status"
+                    role="status"
+                    aria-live="polite"
+                  ></p>
+                </div>
+                <dl>
+                  <div>
+                    <dt>With transcript</dt>
+                    <dd id="report-coverage-with-transcript">—</dd>
+                  </div>
+                  <div>
+                    <dt>Partial or missing</dt>
+                    <dd id="report-coverage-incomplete">—</dd>
+                  </div>
+                </dl>
+                <button
+                  class="text-button"
+                  id="report-coverage-open"
+                  type="button"
+                >
+                  See coverage details
+                </button>
+              </section>
+
+              <section
+                class="brief-section report-habits"
+                aria-labelledby="report-habits-heading"
+              >
                 <div class="brief-section-heading">
                   <div>
                     <p class="eyebrow">Written by your own agent</p>
-                    <h2 id="report-habits-heading">Your last sessions, debriefed</h2>
+                    <h2 id="report-habits-heading">
+                      Your last sessions, debriefed
+                    </h2>
                   </div>
-                  <button class="text-button" id="report-habits-open" type="button">
+                  <button
+                    class="text-button"
+                    id="report-habits-open"
+                    type="button"
+                  >
                     Open Habits
                   </button>
                 </div>
-                <p class="report-habits-status" id="report-habits-status" role="status" aria-live="polite"></p>
-                <div class="report-habit-summary" id="report-habit-summary" hidden></div>
+                <p
+                  class="report-habits-status"
+                  id="report-habits-status"
+                  role="status"
+                  aria-live="polite"
+                ></p>
+                <div
+                  class="report-habit-summary"
+                  id="report-habit-summary"
+                  hidden
+                ></div>
                 <div class="report-habit-grid" id="report-habits-list"></div>
                 <div class="brief-empty" id="report-habits-empty" hidden>
-                  <p id="report-habits-empty-title">No finished sessions to debrief yet</p>
+                  <p id="report-habits-empty-title">
+                    No finished sessions to debrief yet
+                  </p>
                   <small id="report-habits-empty-detail">
-                    Belay writes a debrief with your own Claude Code, Codex, Cursor CLI, or Antigravity CLI once a session's transcript is complete.
+                    Belay writes a debrief with your own Claude Code, Codex,
+                    Cursor CLI, or Antigravity CLI once a session's transcript
+                    is complete.
                   </small>
                 </div>
               </section>
 
-              <section class="brief-section" aria-labelledby="brief-actions-heading" hidden>
+              <section
+                class="brief-section"
+                aria-labelledby="brief-actions-heading"
+                hidden
+              >
                 <div class="brief-section-heading">
                   <div>
                     <p class="eyebrow">Cost-ranked across sessions</p>
@@ -213,14 +279,21 @@
                 </div>
                 <div class="brief-card-grid" id="brief-action-list"></div>
                 <div class="brief-empty" id="brief-actions-empty" hidden>
-                  <p id="brief-actions-empty-title">No recurring issues detected yet</p>
+                  <p id="brief-actions-empty-title">
+                    No recurring issues detected yet
+                  </p>
                   <small id="brief-actions-empty-detail">
-                    Belay keeps analyzing encrypted local transcripts as sessions arrive.
+                    Belay keeps analyzing encrypted local transcripts as
+                    sessions arrive.
                   </small>
                 </div>
               </section>
 
-              <section class="brief-section" aria-labelledby="brief-recent-heading" hidden>
+              <section
+                class="brief-section"
+                aria-labelledby="brief-recent-heading"
+                hidden
+              >
                 <div class="brief-section-heading">
                   <div>
                     <p class="eyebrow">Applied and proposed</p>
@@ -236,9 +309,7 @@
                 </div>
                 <div class="brief-recent-list" id="brief-recent-list"></div>
                 <div class="brief-empty" id="brief-recent-empty" hidden>
-                  <p id="brief-recent-empty-title">
-                    No fixes recorded yet
-                  </p>
+                  <p id="brief-recent-empty-title">No fixes recorded yet</p>
                   <small id="brief-recent-empty-detail">
                     Use /belay in Claude Code or $belay in Codex to review the
                     top issue.
@@ -246,7 +317,11 @@
                 </div>
               </section>
 
-              <section class="brief-section report-waste" aria-labelledby="brief-agents-heading" hidden>
+              <section
+                class="brief-section report-waste"
+                aria-labelledby="brief-agents-heading"
+                hidden
+              >
                 <div class="brief-section-heading">
                   <div>
                     <p class="eyebrow">Attributed spend</p>
@@ -268,7 +343,9 @@
                   <div class="brief-section-heading">
                     <div>
                       <p class="eyebrow">Encrypted local transcripts</p>
-                      <h2 id="transcript-overview-heading">Transcript coverage</h2>
+                      <h2 id="transcript-overview-heading">
+                        Transcript coverage
+                      </h2>
                     </div>
                     <p
                       class="transcript-refresh-status"
@@ -280,8 +357,8 @@
                     </p>
                   </div>
                   <p class="transcript-privacy-copy">
-                    Full local transcripts are retained encrypted on this device.
-                    Nothing is uploaded.
+                    Full local transcripts are retained encrypted on this
+                    device. Nothing is uploaded.
                   </p>
                   <dl class="transcript-coverage-counts">
                     <div>
@@ -460,7 +537,7 @@
                     autocomplete="off"
                     spellcheck="false"
                     placeholder="Exact agent name"
-                  >
+                  />
                 </label>
               </div>
 
@@ -487,7 +564,7 @@
                   </label>
                 </div>
                 <label class="experimental-filter">
-                  <input id="issue-filter-experimental" type="checkbox">
+                  <input id="issue-filter-experimental" type="checkbox" />
                   <span>
                     <strong>Include experimental findings</strong>
                     Precision is still being validated.
@@ -497,7 +574,9 @@
 
               <div class="filter-footer attention-filter-footer">
                 <p id="attention-filter-note">Showing reviewed findings.</p>
-                <button id="clear-attention-filters" type="button">Clear</button>
+                <button id="clear-attention-filters" type="button">
+                  Clear
+                </button>
               </div>
             </form>
 
@@ -529,19 +608,26 @@
                   recorded attempts. This does not establish causality or
                   whether an attempted change worked.
                 </p>
-                <form
-                  class="monitoring-filters"
-                  id="fix-monitoring-filters"
-                >
+                <form class="monitoring-filters" id="fix-monitoring-filters">
                   <label>
                     <span>Monitoring state</span>
                     <select id="fix-monitoring-filter-state">
                       <option value="">All active states</option>
-                      <option value="matching_evidence_observed">Same finding observed later</option>
-                      <option value="monitoring_incomplete">Monitoring incomplete</option>
-                      <option value="awaiting_later_evidence">Waiting for later sessions</option>
-                      <option value="no_later_match_observed">No later matching evidence</option>
-                      <option value="comparison_unavailable">Later sessions cannot be compared</option>
+                      <option value="matching_evidence_observed">
+                        Same finding observed later
+                      </option>
+                      <option value="monitoring_incomplete">
+                        Monitoring incomplete
+                      </option>
+                      <option value="awaiting_later_evidence">
+                        Waiting for later sessions
+                      </option>
+                      <option value="no_later_match_observed">
+                        No later matching evidence
+                      </option>
+                      <option value="comparison_unavailable">
+                        Later sessions cannot be compared
+                      </option>
                       <option value="retracted">Retracted</option>
                     </select>
                   </label>
@@ -550,13 +636,25 @@
                     <select id="fix-monitoring-filter-change-kind">
                       <option value="">All categories</option>
                       <option value="code_change">Code change</option>
-                      <option value="configuration_change">Configuration change</option>
-                      <option value="dependency_change">Dependency change</option>
-                      <option value="permission_change">Permission change</option>
-                      <option value="environment_change">Environment change</option>
-                      <option value="agent_instruction">Agent instruction</option>
+                      <option value="configuration_change">
+                        Configuration change
+                      </option>
+                      <option value="dependency_change">
+                        Dependency change
+                      </option>
+                      <option value="permission_change">
+                        Permission change
+                      </option>
+                      <option value="environment_change">
+                        Environment change
+                      </option>
+                      <option value="agent_instruction">
+                        Agent instruction
+                      </option>
                       <option value="project_rule">Project rule</option>
-                      <option value="monitor_hook">Agent monitoring setup</option>
+                      <option value="monitor_hook">
+                        Agent monitoring setup
+                      </option>
                       <option value="other">Other</option>
                     </select>
                   </label>
@@ -580,7 +678,7 @@
                       autocomplete="off"
                       spellcheck="false"
                       placeholder="Exact agent name"
-                    >
+                    />
                   </label>
                   <label>
                     <span>Issue ID</span>
@@ -591,20 +689,20 @@
                       autocomplete="off"
                       spellcheck="false"
                       placeholder="Exact iss_… ID"
-                    >
+                    />
                   </label>
                   <label>
                     <span>Recorded after</span>
                     <input
                       id="fix-monitoring-filter-recorded-after"
                       type="datetime-local"
-                    >
+                    />
                   </label>
                   <label class="monitoring-checkbox">
                     <input
                       id="fix-monitoring-filter-retracted"
                       type="checkbox"
-                    >
+                    />
                     <span>Include retracted</span>
                   </label>
                   <div class="filter-footer monitoring-filter-footer">
@@ -641,7 +739,9 @@
                   hidden
                 >
                   <span class="empty-glyph" aria-hidden="true">◇</span>
-                  <p id="fix-monitoring-empty-title">No monitored attempts available</p>
+                  <p id="fix-monitoring-empty-title">
+                    No monitored attempts available
+                  </p>
                   <small id="fix-monitoring-empty-detail"></small>
                 </div>
                 <div
@@ -669,7 +769,11 @@
                   <span class="count-pill" id="issue-count">—</span>
                 </div>
                 <p class="section-disclosure" id="issue-filter-disclosure"></p>
-                <div class="issue-list" id="issue-list" aria-live="polite"></div>
+                <div
+                  class="issue-list"
+                  id="issue-list"
+                  aria-live="polite"
+                ></div>
                 <div class="panel-state compact-state" id="issues-loading">
                   <span class="spinner" aria-hidden="true"></span>
                   <p>Loading findings…</p>
@@ -721,7 +825,9 @@
                   hidden
                 >
                   <span class="empty-glyph" aria-hidden="true">◇</span>
-                  <p id="evidence-gaps-empty-title">No evidence gaps available</p>
+                  <p id="evidence-gaps-empty-title">
+                    No evidence gaps available
+                  </p>
                   <small id="evidence-gaps-empty-detail"></small>
                 </div>
                 <div
@@ -752,8 +858,8 @@
               <p class="eyebrow">Findings and evidence gaps</p>
               <h2>Choose something Belay found</h2>
               <p>
-                Review why it may matter, what to do next, and the sessions
-                that support it.
+                Review why it may matter, what to do next, and the sessions that
+                support it.
               </p>
             </div>
 
@@ -770,7 +876,10 @@
                 <div>
                   <p class="eyebrow">Finding</p>
                   <h2 id="family-detail-heading" tabindex="-1">Finding</h2>
-                  <div class="issue-detail-badges" id="family-detail-badges"></div>
+                  <div
+                    class="issue-detail-badges"
+                    id="family-detail-badges"
+                  ></div>
                 </div>
               </header>
 
@@ -779,7 +888,10 @@
                   class="issue-explanation"
                   aria-labelledby="family-observation-heading"
                 >
-                  <p class="analysis-qualifier" id="family-analysis-qualifier"></p>
+                  <p
+                    class="analysis-qualifier"
+                    id="family-analysis-qualifier"
+                  ></p>
                   <h3 id="family-observation-heading">Recorded activity</h3>
                   <p id="family-observation"></p>
                   <p class="section-disclosure" id="family-caveat"></p>
@@ -793,7 +905,9 @@
                   <div class="matching-heading">
                     <div>
                       <p class="eyebrow">Evidence</p>
-                      <h3 id="family-members-heading">Sessions with this finding</h3>
+                      <h3 id="family-members-heading">
+                        Sessions with this finding
+                      </h3>
                     </div>
                     <span class="count-pill" id="family-member-count">—</span>
                   </div>
@@ -848,8 +962,13 @@
                 </button>
                 <div>
                   <p class="eyebrow" id="issue-detail-kind">Issue</p>
-                  <h2 id="issue-detail-heading" tabindex="-1">Detected issue</h2>
-                  <div class="issue-detail-badges" id="issue-detail-badges"></div>
+                  <h2 id="issue-detail-heading" tabindex="-1">
+                    Detected issue
+                  </h2>
+                  <div
+                    class="issue-detail-badges"
+                    id="issue-detail-badges"
+                  ></div>
                 </div>
               </header>
 
@@ -859,7 +978,10 @@
                   id="issue-explanation-section"
                   aria-labelledby="why-heading"
                 >
-                  <p class="analysis-qualifier" id="issue-analysis-qualifier"></p>
+                  <p
+                    class="analysis-qualifier"
+                    id="issue-analysis-qualifier"
+                  ></p>
                   <h3 id="why-heading">Why this needs attention</h3>
                   <p id="issue-explanation"></p>
                   <p class="section-disclosure" id="issue-scope-disclosure"></p>
@@ -874,9 +996,13 @@
                   <div class="evidence-preview-heading">
                     <div>
                       <p class="eyebrow">Cited evidence</p>
-                      <h3 id="issue-evidence-preview-heading">What supports this observation</h3>
+                      <h3 id="issue-evidence-preview-heading">
+                        What supports this observation
+                      </h3>
                     </div>
-                    <span class="count-pill" id="issue-evidence-preview-count">—</span>
+                    <span class="count-pill" id="issue-evidence-preview-count"
+                      >—</span
+                    >
                   </div>
                   <p
                     class="section-disclosure"
@@ -907,7 +1033,9 @@
                   <div class="matching-heading">
                     <div>
                       <p class="eyebrow">Related evidence</p>
-                      <h3 id="matching-sessions-heading">Supporting sessions</h3>
+                      <h3 id="matching-sessions-heading">
+                        Supporting sessions
+                      </h3>
                     </div>
                     <span class="count-pill" id="occurrence-count">—</span>
                   </div>
@@ -961,9 +1089,9 @@
                     </button>
                   </div>
                   <p class="fix-recurrence-disclosure">
-                    Belay compares later local analysis for the same finding.
-                    It does not verify resolution or establish that an
-                    attempted change caused an outcome.
+                    Belay compares later local analysis for the same finding. It
+                    does not verify resolution or establish that an attempted
+                    change caused an outcome.
                   </p>
                   <p
                     class="monitoring-status"
@@ -978,7 +1106,8 @@
                     role="status"
                     aria-live="polite"
                   >
-                    Checking whether an attempt can be recorded for this finding…
+                    Checking whether an attempt can be recorded for this
+                    finding…
                   </p>
                   <div
                     class="fix-action-status"
@@ -1040,7 +1169,9 @@
                       <h3 id="fingerprint-heading">Exact-match ID</h3>
                       <code id="issue-fingerprint"></code>
                     </div>
-                    <button id="copy-issue-fingerprint" type="button">Copy</button>
+                    <button id="copy-issue-fingerprint" type="button">
+                      Copy
+                    </button>
                   </section>
                 </details>
               </div>
@@ -1049,325 +1180,392 @@
         </section>
 
         <section class="workspace sessions-workspace" id="sessions-view" hidden>
-        <aside class="session-panel" aria-label="Agent sessions">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">Activity</p>
-              <h1 id="sessions-heading">Sessions</h1>
-            </div>
-            <span class="count-pill" id="session-count">—</span>
-          </div>
-
-          <section class="local-overview" aria-label="Local activity overview" hidden>
-            <dl class="overview-metrics">
+          <aside class="session-panel" aria-label="Agent sessions">
+            <div class="panel-heading">
               <div>
-                <dt>Sessions</dt>
-                <dd id="overview-session-count">—</dd>
+                <p class="eyebrow">Activity</p>
+                <h1 id="sessions-heading">Sessions</h1>
               </div>
-              <div>
-                <dt>Events</dt>
-                <dd id="overview-event-count">—</dd>
-              </div>
-              <div>
-                <dt>Findings</dt>
-                <dd id="overview-finding-count">—</dd>
-              </div>
-            </dl>
-            <p id="overview-harnesses">Agent activity unavailable</p>
-            <p id="overview-freshness">
-              Last retained data received by Belay · Unavailable
-            </p>
-            <p class="overview-explanation">
-              <strong>Imported history</strong> sessions were discovered from
-              prior local agent activity. <strong>Live</strong> sessions arrive
-              through enabled hooks.
-            </p>
-          </section>
-
-          <label class="search-field">
-            <span class="search-icon" aria-hidden="true">⌕</span>
-            <span class="sr-only">Search by session ID or agent name</span>
-            <input
-              id="session-search"
-              type="search"
-              placeholder="Search session ID or agent name"
-              maxlength="128"
-              autocomplete="off"
-              spellcheck="false"
-            >
-          </label>
-
-          <div class="filter-grid session-filter-row" aria-label="Filter sessions">
-            <label>
-              <span>Agent</span>
-              <select id="filter-harness">
-                <option value="">All agents</option>
-              </select>
-            </label>
-            <label>
-              <span>Date</span>
-              <select id="filter-date">
-                <option value="">Any time</option>
-                <option value="1">Last 24 hours</option>
-                <option value="7">Last 7 days</option>
-                <option value="30">Last 30 days</option>
-              </select>
-            </label>
-          </div>
-          <details class="filter-more" id="filter-more">
-            <summary>More filters</summary>
-            <div class="filter-grid">
-              <label>
-                <span>Collection</span>
-                <select id="filter-capture">
-                  <option value="">Live + imported history</option>
-                  <option value="live">Live</option>
-                  <option value="historical">Imported history</option>
-                </select>
-              </label>
-              <label>
-                <span>Outcome</span>
-                <select id="filter-outcome">
-                  <option value="">Any outcome</option>
-                  <option value="reported">Outcome reported</option>
-                  <option value="unavailable">Outcome not reported</option>
-                </select>
-              </label>
+              <span class="count-pill" id="session-count">—</span>
             </div>
-          </details>
-          <div class="filter-footer">
-            <p id="session-scope-note">Showing loaded sessions.</p>
-            <button id="clear-filters" type="button">Clear</button>
-          </div>
-
-          <div class="session-list" id="session-list" aria-live="polite"></div>
-
-          <div class="pagination-bar" id="sessions-pagination" hidden>
-            <p id="sessions-page-status"></p>
-            <button id="sessions-load-more" type="button">Load more</button>
-          </div>
-
-          <div class="panel-state" id="sessions-loading">
-            <span class="spinner" aria-hidden="true"></span>
-            <p>Loading local sessions…</p>
-          </div>
-
-          <div class="panel-state" id="sessions-empty" hidden>
-            <span class="empty-glyph" aria-hidden="true">◇</span>
-            <p>No sessions found</p>
-            <small>Agent activity will appear here after it is collected.</small>
-          </div>
-        </aside>
-
-        <section class="timeline-panel" aria-label="Session timeline">
-          <div class="welcome-state" id="welcome-state">
-            <div class="welcome-mark" aria-hidden="true">
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
-            <h2>Select a session</h2>
-            <p>
-              Each session shows what your agent did, when, and what is worth a
-              look. The timeline shows minimized canonical events. Encrypted
-              transcripts stay on this device and are used only for Belay
-              Local intelligence over loopback.
-            </p>
-          </div>
-
-          <div class="timeline-view" id="timeline-view" hidden>
-            <header class="timeline-header">
-              <button
-                class="back-button"
-                id="back-button"
-                type="button"
-                aria-label="Back to sessions"
-              >
-                ←
-              </button>
-              <div class="session-identity">
-                <span class="harness-avatar" id="selected-avatar" aria-hidden="true"></span>
-                <div>
-                  <div class="title-line">
-                    <h2 id="selected-harness" tabindex="-1">Session</h2>
-                    <span class="status-badge" id="selected-outcome"></span>
-                    <span class="meta-badge" id="selected-historical" hidden>
-                      Imported history
-                    </span>
-                  </div>
-                  <p class="selected-meta" id="selected-meta"></p>
-                  <div class="selected-id-line">
-                    <p id="selected-session-id"></p>
-                    <button id="copy-selected-session" type="button">Copy ID</button>
-                  </div>
-                </div>
-              </div>
-
-              <dl class="session-stats">
-                <div>
-                  <dt>Events</dt>
-                  <dd id="selected-event-count">—</dd>
-                </div>
-                <div>
-                  <dt>Duration</dt>
-                  <dd id="selected-duration">—</dd>
-                </div>
-                <div>
-                  <dt>Last seen</dt>
-                  <dd id="selected-ended-at">—</dd>
-                </div>
-              </dl>
-            </header>
 
             <section
-              class="session-diagnosis"
-              id="session-diagnosis"
-              aria-labelledby="session-diagnosis-heading"
+              class="local-overview"
+              aria-label="Local activity overview"
               hidden
             >
-              <div class="session-diagnosis-heading">
+              <dl class="overview-metrics">
                 <div>
-                  <p class="eyebrow">Session diagnosis</p>
-                  <h3 id="session-diagnosis-heading" tabindex="-1">
-                    What deserves review
-                  </h3>
+                  <dt>Sessions</dt>
+                  <dd id="overview-session-count">—</dd>
                 </div>
-                <span class="meta-badge" id="session-diagnosis-status"></span>
-              </div>
-              <div class="session-diagnosis-summary">
-                <strong id="session-diagnosis-title"></strong>
-                <p id="session-diagnosis-detail"></p>
-              </div>
-              <div
-                class="session-diagnosis-actions"
-                id="session-diagnosis-actions"
-              ></div>
-              <ul
-                class="session-diagnosis-limitations"
-                id="session-diagnosis-limitations"
-              ></ul>
+                <div>
+                  <dt>Events</dt>
+                  <dd id="overview-event-count">—</dd>
+                </div>
+                <div>
+                  <dt>Findings</dt>
+                  <dd id="overview-finding-count">—</dd>
+                </div>
+              </dl>
+              <p id="overview-harnesses">Agent activity unavailable</p>
+              <p id="overview-freshness">
+                Last retained data received by Belay · Unavailable
+              </p>
+              <p class="overview-explanation">
+                <strong>Imported history</strong> sessions were discovered from
+                prior local agent activity. <strong>Live</strong> sessions
+                arrive through enabled hooks.
+              </p>
             </section>
 
-            <div class="session-tabs" role="tablist" aria-label="Session detail views">
-              <button
-                class="session-tab"
-                id="session-tab-summary"
-                type="button"
-                role="tab"
-                aria-selected="true"
-              >
-                Summary
-              </button>
-              <button
-                class="session-tab"
-                id="session-tab-timeline"
-                type="button"
-                role="tab"
-                aria-selected="false"
-              >
-                Timeline <span class="session-tab-count" id="session-tab-timeline-count"></span>
-              </button>
-            </div>
-            <div class="session-summary-tab" id="session-summary-tab">
-            <section class="session-visual" id="session-visual" aria-label="Session at a glance" hidden></section>
-            <details
-              class="session-overview"
-              id="session-overview"
-              aria-labelledby="session-overview-title"
-              open
+            <label class="search-field">
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <span class="sr-only">Search by session ID or agent name</span>
+              <input
+                id="session-search"
+                type="search"
+                placeholder="Search session ID or agent name"
+                maxlength="128"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+
+            <div
+              class="filter-grid session-filter-row"
+              aria-label="Filter sessions"
             >
-              <summary class="section-heading">
-                <span>
-                  <span class="eyebrow overview-eyebrow">Details</span>
-                  <strong id="session-overview-title">Recorded activity</strong>
-                </span>
-                <span class="overview-state" id="overview-state">
-                  Loading the complete session summary…
-                </span>
-              </summary>
-              <div class="overview-body">
-                <section class="story-section story-attention" aria-labelledby="needs-attention-heading">
-                  <h4 id="needs-attention-heading">Worth a look</h4>
-                  <div id="needs-attention-summary"></div>
-                  <div class="finding-list" id="finding-list"></div>
-                  <div
-                    class="finding-pagination"
-                    id="findings-pagination"
-                    hidden
-                  >
-                    <p id="findings-page-status"></p>
-                    <button id="findings-load-more" type="button">
-                      Load more findings
-                    </button>
-                  </div>
-                </section>
-                <section class="story-section" aria-labelledby="observed-work-heading">
-                  <h4 id="observed-work-heading">Activity</h4>
-                  <div id="observed-work-summary"></div>
-                </section>
-                <section class="story-section" aria-labelledby="highlights-heading">
-                  <h4 id="highlights-heading">Key moments</h4>
-                  <p class="overview-caveat">
-                    Up to five notable events from the loaded timeline.
-                  </p>
-                  <ol class="session-highlights" id="session-highlights"></ol>
-                </section>
-                <section class="story-section" aria-labelledby="resources-heading">
-                  <h4 id="resources-heading">Files and resources</h4>
-                  <div class="resource-list" id="resource-list"></div>
-                  <p class="overview-caveat" id="resource-disclosure"></p>
-                </section>
-                <details class="session-technical">
-                  <summary>Counts and analysis details</summary>
-                  <p id="overview-quality"></p>
-                  <dl class="activity-grid" id="activity-grid"></dl>
-                </details>
+              <label>
+                <span>Agent</span>
+                <select id="filter-harness">
+                  <option value="">All agents</option>
+                </select>
+              </label>
+              <label>
+                <span>Date</span>
+                <select id="filter-date">
+                  <option value="">Any time</option>
+                  <option value="1">Last 24 hours</option>
+                  <option value="7">Last 7 days</option>
+                  <option value="30">Last 30 days</option>
+                </select>
+              </label>
+            </div>
+            <details class="filter-more" id="filter-more">
+              <summary>More filters</summary>
+              <div class="filter-grid">
+                <label>
+                  <span>Collection</span>
+                  <select id="filter-capture">
+                    <option value="">Live + imported history</option>
+                    <option value="live">Live</option>
+                    <option value="historical">Imported history</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Outcome</span>
+                  <select id="filter-outcome">
+                    <option value="">Any outcome</option>
+                    <option value="reported">Outcome reported</option>
+                    <option value="unavailable">Outcome not reported</option>
+                  </select>
+                </label>
               </div>
             </details>
-
+            <div class="filter-footer">
+              <p id="session-scope-note">Showing loaded sessions.</p>
+              <button id="clear-filters" type="button">Clear</button>
             </div>
-            <div class="session-timeline-tab" id="session-timeline-tab" hidden>
-            <div class="timeline-meta">
-              <div>
-                <p class="eyebrow">Event timeline</p>
-                <p id="timeline-freshness"></p>
+
+            <div
+              class="session-list"
+              id="session-list"
+              aria-live="polite"
+            ></div>
+
+            <div class="pagination-bar" id="sessions-pagination" hidden>
+              <p id="sessions-page-status"></p>
+              <button id="sessions-load-more" type="button">Load more</button>
+            </div>
+
+            <div class="panel-state" id="sessions-loading">
+              <span class="spinner" aria-hidden="true"></span>
+              <p>Loading local sessions…</p>
+            </div>
+
+            <div class="panel-state" id="sessions-empty" hidden>
+              <span class="empty-glyph" aria-hidden="true">◇</span>
+              <p>No sessions found</p>
+              <small
+                >Agent activity will appear here after it is collected.</small
+              >
+            </div>
+          </aside>
+
+          <section class="timeline-panel" aria-label="Session timeline">
+            <div class="welcome-state" id="welcome-state">
+              <div class="welcome-mark" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
               </div>
-              <div class="timeline-actions">
+              <h2>Select a session</h2>
+              <p>
+                Each session shows what your agent did, when, and what is worth
+                a look. The timeline shows minimized canonical events. Encrypted
+                transcripts stay on this device and are used only for Belay
+                Local intelligence over loopback.
+              </p>
+            </div>
+
+            <div class="timeline-view" id="timeline-view" hidden>
+              <header class="timeline-header">
                 <button
-                  class="event-toggle"
-                  id="all-events-toggle"
+                  class="back-button"
+                  id="back-button"
                   type="button"
-                  aria-pressed="false"
+                  aria-label="Back to sessions"
                 >
-                  All loaded events
+                  ←
                 </button>
-                <span class="privacy-label">Minimized canonical events</span>
+                <div class="session-identity">
+                  <span
+                    class="harness-avatar"
+                    id="selected-avatar"
+                    aria-hidden="true"
+                  ></span>
+                  <div>
+                    <div class="title-line">
+                      <h2 id="selected-harness" tabindex="-1">Session</h2>
+                      <span class="status-badge" id="selected-outcome"></span>
+                      <span class="meta-badge" id="selected-historical" hidden>
+                        Imported history
+                      </span>
+                    </div>
+                    <p class="selected-meta" id="selected-meta"></p>
+                    <div class="selected-id-line">
+                      <p id="selected-session-id"></p>
+                      <button id="copy-selected-session" type="button">
+                        Copy ID
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <dl class="session-stats">
+                  <div>
+                    <dt>Events</dt>
+                    <dd id="selected-event-count">—</dd>
+                  </div>
+                  <div>
+                    <dt>Duration</dt>
+                    <dd id="selected-duration">—</dd>
+                  </div>
+                  <div>
+                    <dt>Last seen</dt>
+                    <dd id="selected-ended-at">—</dd>
+                  </div>
+                </dl>
+              </header>
+
+              <section
+                class="session-diagnosis"
+                id="session-diagnosis"
+                aria-labelledby="session-diagnosis-heading"
+                hidden
+              >
+                <div class="session-diagnosis-heading">
+                  <div>
+                    <p class="eyebrow">Session diagnosis</p>
+                    <h3 id="session-diagnosis-heading" tabindex="-1">
+                      What deserves review
+                    </h3>
+                  </div>
+                  <span class="meta-badge" id="session-diagnosis-status"></span>
+                </div>
+                <div class="session-diagnosis-summary">
+                  <strong id="session-diagnosis-title"></strong>
+                  <p id="session-diagnosis-detail"></p>
+                </div>
+                <div
+                  class="session-diagnosis-actions"
+                  id="session-diagnosis-actions"
+                ></div>
+                <ul
+                  class="session-diagnosis-limitations"
+                  id="session-diagnosis-limitations"
+                ></ul>
+              </section>
+
+              <div
+                class="session-tabs"
+                role="tablist"
+                aria-label="Session detail views"
+              >
+                <button
+                  class="session-tab"
+                  id="session-tab-summary"
+                  type="button"
+                  role="tab"
+                  aria-selected="true"
+                >
+                  Summary
+                </button>
+                <button
+                  class="session-tab"
+                  id="session-tab-timeline"
+                  type="button"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  Timeline
+                  <span
+                    class="session-tab-count"
+                    id="session-tab-timeline-count"
+                  ></span>
+                </button>
+              </div>
+              <div class="session-summary-tab" id="session-summary-tab">
+                <section
+                  class="session-visual"
+                  id="session-visual"
+                  aria-label="Session at a glance"
+                  hidden
+                ></section>
+                <details
+                  class="session-overview"
+                  id="session-overview"
+                  aria-labelledby="session-overview-title"
+                  open
+                >
+                  <summary class="section-heading">
+                    <span>
+                      <span class="eyebrow overview-eyebrow">Details</span>
+                      <strong id="session-overview-title"
+                        >Recorded activity</strong
+                      >
+                    </span>
+                    <span class="overview-state" id="overview-state">
+                      Loading the complete session summary…
+                    </span>
+                  </summary>
+                  <div class="overview-body">
+                    <section
+                      class="story-section story-attention"
+                      aria-labelledby="needs-attention-heading"
+                    >
+                      <h4 id="needs-attention-heading">Worth a look</h4>
+                      <div id="needs-attention-summary"></div>
+                      <div class="finding-list" id="finding-list"></div>
+                      <div
+                        class="finding-pagination"
+                        id="findings-pagination"
+                        hidden
+                      >
+                        <p id="findings-page-status"></p>
+                        <button id="findings-load-more" type="button">
+                          Load more findings
+                        </button>
+                      </div>
+                    </section>
+                    <section
+                      class="story-section"
+                      aria-labelledby="observed-work-heading"
+                    >
+                      <h4 id="observed-work-heading">Activity</h4>
+                      <div id="observed-work-summary"></div>
+                    </section>
+                    <section
+                      class="story-section"
+                      aria-labelledby="highlights-heading"
+                    >
+                      <h4 id="highlights-heading">Key moments</h4>
+                      <p class="overview-caveat">
+                        Up to five notable events from the loaded timeline.
+                      </p>
+                      <ol
+                        class="session-highlights"
+                        id="session-highlights"
+                      ></ol>
+                    </section>
+                    <section
+                      class="story-section"
+                      aria-labelledby="resources-heading"
+                    >
+                      <h4 id="resources-heading">Files and resources</h4>
+                      <div class="resource-list" id="resource-list"></div>
+                      <p class="overview-caveat" id="resource-disclosure"></p>
+                    </section>
+                    <details class="session-technical">
+                      <summary>Counts and analysis details</summary>
+                      <p id="overview-quality"></p>
+                      <dl class="activity-grid" id="activity-grid"></dl>
+                    </details>
+                  </div>
+                </details>
+              </div>
+              <div
+                class="session-timeline-tab"
+                id="session-timeline-tab"
+                hidden
+              >
+                <div class="timeline-meta">
+                  <div>
+                    <p class="eyebrow">Event timeline</p>
+                    <p id="timeline-freshness"></p>
+                  </div>
+                  <div class="timeline-actions">
+                    <button
+                      class="event-toggle"
+                      id="all-events-toggle"
+                      type="button"
+                      aria-pressed="false"
+                    >
+                      All loaded events
+                    </button>
+                    <span class="privacy-label"
+                      >Minimized canonical events</span
+                    >
+                  </div>
+                </div>
+                <p class="timeline-scope" id="timeline-scope"></p>
+
+                <div class="event-scroll">
+                  <div
+                    class="event-list"
+                    id="event-list"
+                    aria-live="polite"
+                  ></div>
+
+                  <div
+                    class="panel-state timeline-loading"
+                    id="timeline-loading"
+                    hidden
+                  >
+                    <span class="spinner" aria-hidden="true"></span>
+                    <p>Loading timeline…</p>
+                  </div>
+
+                  <div class="panel-state" id="events-empty" hidden>
+                    <span class="empty-glyph" aria-hidden="true">◇</span>
+                    <p>No events in this session</p>
+                  </div>
+                </div>
+
+                <div
+                  class="pagination-bar timeline-pagination"
+                  id="events-pagination"
+                  hidden
+                >
+                  <p id="events-page-status"></p>
+                  <button id="events-load-more" type="button">
+                    Load more events
+                  </button>
+                </div>
               </div>
             </div>
-            <p class="timeline-scope" id="timeline-scope"></p>
-
-            <div class="event-scroll">
-              <div class="event-list" id="event-list" aria-live="polite"></div>
-
-              <div class="panel-state timeline-loading" id="timeline-loading" hidden>
-                <span class="spinner" aria-hidden="true"></span>
-                <p>Loading timeline…</p>
-              </div>
-
-              <div class="panel-state" id="events-empty" hidden>
-                <span class="empty-glyph" aria-hidden="true">◇</span>
-                <p>No events in this session</p>
-              </div>
-            </div>
-
-            <div class="pagination-bar timeline-pagination" id="events-pagination" hidden>
-              <p id="events-page-status"></p>
-              <button id="events-load-more" type="button">Load more events</button>
-            </div>
-            </div>
-          </div>
-
-        </section>
+          </section>
         </section>
 
         <section
@@ -1376,10 +1574,17 @@
           aria-labelledby="habits-heading"
           hidden
         >
-          <aside class="habits-rail" id="habits-rail" aria-label="Debriefed sessions">
+          <aside
+            class="habits-rail"
+            id="habits-rail"
+            aria-label="Debriefed sessions"
+          >
             <div class="habits-rail-heading">
               <h1 id="habits-heading" tabindex="-1">Habits</h1>
-              <p id="habits-window">One debrief per session, written by your Claude Code, Codex, Cursor CLI, or Antigravity CLI.</p>
+              <p id="habits-window">
+                One debrief per session, written by your Claude Code, Codex,
+                Cursor CLI, or Antigravity CLI.
+              </p>
               <p
                 class="habits-rail-status"
                 id="habits-status"
@@ -1393,10 +1598,16 @@
               <p id="habits-loading-text">Reading your recent sessions…</p>
             </div>
 
-            <div class="brief-error habits-rail-block" id="habits-error" role="alert" hidden>
+            <div
+              class="brief-error habits-rail-block"
+              id="habits-error"
+              role="alert"
+              hidden
+            >
               <h2 id="habits-error-title">Habits unavailable</h2>
               <p id="habits-error-detail">
-                Belay could not prepare your debriefs. Report and Sessions remain available.
+                Belay could not prepare your debriefs. Report and Sessions
+                remain available.
               </p>
               <button class="secondary-button" id="habits-retry" type="button">
                 Try again
@@ -1407,26 +1618,41 @@
             <div class="brief-empty habits-rail-block" id="habits-empty" hidden>
               <p>No finished sessions yet</p>
               <small>
-                Belay can debrief a session once its transcript is complete and it has at least two of your messages.
+                Belay can debrief a session once its transcript is complete and
+                it has at least two of your messages.
               </small>
             </div>
 
             <div class="habits-rail-footer">
               <span id="habits-older"></span>
-              <button class="text-button" id="habits-debrief-all" type="button" hidden>
+              <button
+                class="text-button"
+                id="habits-debrief-all"
+                type="button"
+                hidden
+              >
                 Write their debriefs
               </button>
             </div>
           </aside>
 
-          <section class="habits-detail-pane" id="habits-content" hidden aria-label="Session debrief">
+          <section
+            class="habits-detail-pane"
+            id="habits-content"
+            hidden
+            aria-label="Session debrief"
+          >
             <div class="habits-detail-scroll">
               <div id="habits-detail"></div>
               <details class="habits-about" id="habits-about" hidden>
                 <summary>About this data</summary>
                 <ul id="habits-limitations"></ul>
                 <p>
-                  Each debrief is written by the Claude Code, Codex, Cursor CLI, or Antigravity CLI installed on this machine, reading a scrubbed copy of one session from your encrypted local history. Nothing here is compared with other people, and nothing here is sent to your agent.
+                  Each debrief is written by the Claude Code, Codex, Cursor CLI,
+                  or Antigravity CLI installed on this machine, reading a
+                  scrubbed copy of one session from your encrypted local
+                  history. Nothing here is compared with other people, and
+                  nothing here is sent to your agent.
                 </p>
               </details>
             </div>
@@ -1535,8 +1761,8 @@
         </header>
         <div class="modal-scroll mission-pack-scroll">
           <p id="mission-pack-dialog-description">
-            Review what Belay recommends carrying forward. Nothing applies
-            until you approve it in your agent session.
+            Review what Belay recommends carrying forward. Nothing applies until
+            you approve it in your agent session.
           </p>
           <div
             class="mission-pack-loading"
@@ -1594,11 +1820,7 @@
           >
             Show evidence
           </button>
-          <button
-            class="secondary-button"
-            id="mission-pack-done"
-            type="button"
-          >
+          <button class="secondary-button" id="mission-pack-done" type="button">
             Close
           </button>
         </footer>
@@ -1709,8 +1931,8 @@
             the change or its effect.
           </p>
           <p class="fix-recurrence-disclosure">
-            Belay may check later local activity for the same finding. This
-            does not verify the attempted change or establish causality.
+            Belay may check later local activity for the same finding. This does
+            not verify the attempted change or establish causality.
           </p>
           <div
             class="modal-alert"
@@ -1731,8 +1953,8 @@
           <div class="draft-recovery" id="fix-draft-recovery" hidden>
             <strong>Previous submission not confirmed</strong>
             <p>
-              Retry it unchanged, or abandon it before changing the category
-              or starting a new attempt.
+              Retry it unchanged, or abandon it before changing the category or
+              starting a new attempt.
             </p>
             <button
               class="secondary-button"
@@ -1751,12 +1973,8 @@
           >
             Cancel
           </button>
-          <button
-            class="primary-button"
-            id="fix-attempt-confirm"
-            type="button"
-          >
-              Record attempt
+          <button class="primary-button" id="fix-attempt-confirm" type="button">
+            Record attempt
           </button>
         </footer>
       </section>
@@ -1806,9 +2024,7 @@
           </fieldset>
           <div class="draft-recovery" id="fix-retraction-recovery" hidden>
             <strong>Previous retraction not confirmed</strong>
-            <p>
-              Retry it unchanged, or abandon it before changing the reason.
-            </p>
+            <p>Retry it unchanged, or abandon it before changing the reason.</p>
             <button
               class="secondary-button"
               id="abandon-fix-retraction"
@@ -1831,7 +2047,7 @@
             id="fix-retraction-confirm"
             type="button"
           >
-              Retract attempt record
+            Retract attempt record
           </button>
         </footer>
       </section>
