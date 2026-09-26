@@ -1,4167 +1,4084 @@
 (() => {
-  "use strict";
+        "use strict";
 
-  const pageLimits = Object.freeze({
-    sessions: { initial: 40, step: 40, maximum: 100 },
-    events: { initial: 100, step: 100, maximum: 500 },
-    findings: { page: 20 },
-    issues: { page: 20 },
-    familyMembers: { page: 20 },
-    occurrences: { page: 20 },
-    fixMonitoring: { page: 20 },
-    fixMonitoringDetail: { page: 20 },
-    fixRecurrences: { page: 20 },
-  });
-  const mutationRequestDeadlineMilliseconds = 15_000;
-  const initializationPollMilliseconds = 2_000;
-  const transcriptPollMilliseconds = 2_000;
-  const runtimeSchemaVersion = "belay.local-runtime.v1";
-  const updateSchemaVersion = "belay.update-check.v1";
-  const updateInstallCommand =
-    "curl -fsSL https://getbelay.vercel.app/install | bash";
-  const experienceCopy = Object.freeze({
-    current: Object.freeze({
-      navBrief: "Report",
-      navAttention: "Patterns",
-      navSessions: "Sessions",
-      navHabits: "Habits",
-      briefEyebrow: "Belay Report",
-      briefLoading: "Preparing your report…",
-      briefErrorTitle: "Report unavailable",
-      briefErrorDetail:
-        "Belay could not prepare the report. Patterns and Sessions remain available.",
-      briefOpenAttention: "View all patterns",
-      briefOpenSessions: "View sessions",
-      briefRecentEmptyDetail:
-        "Use /belay in Claude Code or $belay in Codex to review the top issue.",
-      attentionAriaLabel: "Recurring patterns",
-      attentionEyebrow: "Across your agent sessions",
-      attentionHeading: "Patterns",
-      attentionStatus: "Pattern status",
-      attentionBackLabel: "Back to patterns",
-      attentionEmptyDetail:
-        "Refresh Patterns before relying on this result.",
-      attentionFilterSummary: "Filter patterns",
-      sessionsHeading: "Sessions",
-    }),
-    "value-first": Object.freeze({
-      navBrief: "Report",
-      navAttention: "Patterns",
-      navSessions: "Sessions",
-      navHabits: "Habits",
-      briefEyebrow: "Belay Report",
-      briefLoading: "Preparing your report…",
-      briefErrorTitle: "Report unavailable",
-      briefErrorDetail:
-        "Belay could not prepare the report. Patterns and Sessions remain available.",
-      briefOpenAttention: "View all patterns",
-      briefOpenSessions: "View sessions",
-      briefRecentEmptyDetail:
-        "Use /belay in Claude Code or $belay in Codex to review the top issue.",
-      attentionAriaLabel: "Recurring patterns",
-      attentionEyebrow: "Across your agent sessions",
-      attentionHeading: "Patterns",
-      attentionStatus: "Pattern status",
-      attentionBackLabel: "Back to patterns",
-      attentionEmptyDetail:
-        "Refresh Patterns before relying on this result.",
-      attentionFilterSummary: "Filter patterns",
-      sessionsHeading: "Sessions",
-    }),
-  });
-  const explicitOutcomes = new Set(["succeeded", "failed", "interrupted"]);
-  const issueCatalog = Object.freeze({
-    "issue.explicit_command_failure": Object.freeze({
-      title: "Command failed",
-      explanation: "The agent reported that a command failed.",
-      action: "Inspect failed command evidence",
-    }),
-    "issue.explicit_tool_failure": Object.freeze({
-      title: "Tool call failed",
-      explanation: "The agent reported that a tool call failed.",
-      caveat:
-        "Belay does not know why it failed or whether a later attempt succeeded.",
-      action: "Inspect cited events",
-    }),
-    "issue.repeated_command_attempts": Object.freeze({
-      title: "Command repeatedly attempted",
-      explanation:
-        "Belay recorded the same minimized command pattern several times close together.",
-      action: "Inspect matching sessions",
-      experimental: true,
-    }),
-    "issue.explicit_permission_denial": Object.freeze({
-      title: "Permission denied",
-      explanation: "The agent reported that a permission request was denied.",
-      action: "Inspect permission evidence",
-    }),
-    "issue.verification_not_observed": Object.freeze({
-      title: "No recognized verification command observed",
-      explanation:
-        "After a recorded file change, Belay did not see a test or verification command it recognizes before the session ended.",
-      action: "Inspect verification evidence",
-      evidenceGap: true,
-    }),
-    "issue.retained_verification_gap_after_changes": Object.freeze({
-      title: "No recognized verification retained after changes",
-      explanation:
-        "Belay's retained evidence contains no recognized verification command after the final recorded file change and before the session ended.",
-      caveat:
-        "This does not show that verification did not occur; Belay only checks supported commands in retained activity.",
-      action: "Inspect cited events",
-      evidenceGap: true,
-    }),
-    "issue.unresolved_verification_failure_at_completion": Object.freeze({
-      title: "Verification still failed at session end",
-      explanation:
-        "A verification command explicitly failed and no later successful verification was observed before session end.",
-      action: "Inspect verification evidence",
-    }),
-    "issue.numbat_finding": Object.freeze({
-      title: "Imported finding without an explanation",
-      explanation:
-        "Belay stored an imported finding, but no reviewed Belay explanation is available for it.",
-      caveat:
-        "Belay does not infer its meaning, impact, or a recommended action.",
-      action: "Review the cited events",
-    }),
-  });
-  const sourceSignalCatalog = Object.freeze({
-    "numbat/tamper.guardrails_off": Object.freeze({
-      title: "Fewer approval prompts enabled",
-      explanation:
-        "Belay recorded a setting that lets actions already permitted by the agent run without asking for approval each time.",
-      caveat:
-        "This setting may be intentional. The record does not show whether an action bypassed a prompt or caused harm.",
-      action:
-        "Review the current agent permission mode. If this was intentional, no change may be needed.",
-    }),
-  });
-  const analysisQualifiers = Object.freeze({
-    pending:
-      "This result may be out of date while Belay analyzes the session again.",
-    failed: "Belay could not refresh this result; it may be out of date.",
-    truncated:
-      "Only part of the session was analyzed; other findings may be missing.",
-    unknown:
-      "Belay cannot confirm whether this result is current or complete.",
-  });
-  const fixMonitoringCatalog = Object.freeze({
-    matching_evidence_observed: Object.freeze({
-      title: "Same finding observed later",
-      detail:
-        "This does not establish causality or whether the attempted change worked.",
-      tone: "attention",
-    }),
-    monitoring_incomplete: Object.freeze({
-      title: "Monitoring is incomplete.",
-      detail:
-        "Some later Local activity is pending, failed, truncated, or only partially analyzed.",
-      tone: "pending",
-    }),
-    awaiting_later_evidence: Object.freeze({
-      title: "Waiting for later sessions",
-      detail: "No comparable completed Local activity is available yet.",
-      tone: "neutral",
-    }),
-    no_later_match_observed: Object.freeze({
-      title:
-        "No later matching evidence was observed in completed Local analysis.",
-      detail: "This does not verify resolution.",
-      tone: "neutral",
-    }),
-    comparison_unavailable: Object.freeze({
-      title: "Later sessions cannot be compared",
-      detail:
-        "Belay cannot compare this attempt with later activity under the current rules.",
-      tone: "neutral",
-    }),
-    retracted: Object.freeze({
-      title: "Attempt record retracted — no longer monitored.",
-      detail: "",
-      tone: "neutral",
-    }),
-    unknown: Object.freeze({
-      title: "Monitoring status unavailable.",
-      detail: "",
-      tone: "neutral",
-    }),
-  });
-  const canonicalUUIDv7Pattern =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-  const fixChangeCatalog = Object.freeze([
-    Object.freeze({
-      value: "code_change",
-      label: "Code change",
-      description: "Source or test code changed.",
-    }),
-    Object.freeze({
-      value: "configuration_change",
-      label: "Configuration change",
-      description: "Project/application configuration changed.",
-    }),
-    Object.freeze({
-      value: "dependency_change",
-      label: "Dependency change",
-      description: "Dependency version or lock state changed.",
-    }),
-    Object.freeze({
-      value: "permission_change",
-      label: "Permission change",
-      description: "Access or permission configuration changed.",
-    }),
-    Object.freeze({
-      value: "environment_change",
-      label: "Environment change",
-      description: "Local runtime, toolchain, or environment changed.",
-    }),
-    Object.freeze({
-      value: "agent_instruction",
-      label: "Agent instruction",
-      description: "User-level agent instruction changed.",
-    }),
-    Object.freeze({
-      value: "project_rule",
-      label: "Project rule",
-      description: "Repository/project agent rule changed.",
-    }),
-    Object.freeze({
-      value: "monitor_hook",
-      label: "Agent monitoring setup",
-      description: "Agent monitoring hook/configuration changed.",
-    }),
-    Object.freeze({
-      value: "other",
-      label: "Other",
-      description: "A deliberate category outside the listed choices.",
-    }),
-  ]);
-  const fixRetractionCatalog = Object.freeze([
-    Object.freeze({
-      value: "recorded_by_mistake",
-      label: "Recorded by mistake",
-    }),
-    Object.freeze({
-      value: "superseded",
-      label: "Replaced by another attempt record",
-    }),
-    Object.freeze({
-      value: "other",
-      label: "Other",
-    }),
-  ]);
-  const fixEligibilityMessages = Object.freeze({
-    analysis_not_current:
-      "Recording is unavailable until Belay finishes updating this finding.",
-    experimental_signal:
-      "An attempt cannot be recorded for an experimental finding.",
-    evidence_gap:
-      "An attempt cannot be recorded for an evidence gap.",
-    scope_unavailable:
-      "Belay does not have enough project information to compare this finding with later sessions.",
-  });
-  const config = globalThis.BELAY_LOCAL_CONFIG || {};
-  const state = {
-    token: resolveToken(config),
-    apiBase: normalizeApiBase(config.apiBase),
-    experience: "current",
-    activeView: "brief",
-    initialization: null,
-    initializationRequestInFlight: false,
-    initializationPollGeneration: 0,
-    initializationPollTimer: 0,
-    transcriptStatus: null,
-    transcriptStatusStale: false,
-    transcriptRequestInFlight: false,
-    transcriptPollGeneration: 0,
-    transcriptPollTimer: 0,
-    updateStatus: null,
-    updatePollTimer: 0,
-    developerBrief: null,
-    briefStatus: "idle",
-    briefError: "",
-    briefRequestGeneration: 0,
-    briefSelectionID: "",
-    userInsights: null,
-    reportHabits: null,
-    reportHabitsStatus: "idle",
-    reportHabitsRequestGeneration: 0,
-    habitsStatus: "idle",
-    habitsSelectedKey: "",
-    habitsTab: "change",
-    habitsOpenInsight: 0,
-    habitsError: "",
-    habitsRequestGeneration: 0,
-    missionPackRequestGeneration: 0,
-    missionPackCacheGeneration: 0,
-    missionPackRequestController: null,
-    missionPackIssue: null,
-    missionPack: null,
-    reportEvidenceIssueID: "",
-    attentionMode: "issues",
-    costIssues: [],
-    costIssueStatus: "idle",
-    costIssueError: "",
-    costIssueRequestGeneration: 0,
-    issues: createAttentionFamilyBucket(),
-    evidenceGaps: createIssueBucket("evidence_gap"),
-    issueFilters: {
-      severity: "",
-      harness: "",
-      origin: "",
-      analysisStatus: "",
-      experimental: false,
-    },
-    selectedFamily: null,
-    selectedFamilyViewCursor: "",
-    familyMembers: [],
-    familyMemberNextCursor: "",
-    familyMemberHasMore: false,
-    familyMemberStatus: "idle",
-    familyMemberError: "",
-    familyMemberRequestGeneration: 0,
-    familyReturnFocus: null,
-    fixMonitoring: createFixMonitoringBucket(),
-    fixMonitoringFilters: {
-      state: "",
-      changeKind: "",
-      severity: "",
-      harness: "",
-      issueID: "",
-      recordedAfter: "",
-      includeRetracted: false,
-    },
-    selectedIssueID: "",
-    selectedIssueKind: "",
-    selectedIssueSource: "",
-    selectedIssueFamilyID: "",
-    selectedIssueEvidenceContext: "",
-    selectedDrivingAnnotationID: "",
-    selectedIssue: null,
-    selectedIssueCatalog: null,
-    selectedGlobalAnalysisCoverage: null,
-    selectedIssueViewCursor: "",
-    occurrences: [],
-    occurrenceNextCursor: "",
-    occurrenceHasMore: false,
-    occurrenceStatus: "idle",
-    occurrenceRequestGeneration: 0,
-    issueEvidencePreview: createIssueEvidencePreview(),
-    issueEvidencePreviewRequestGeneration: 0,
-    issueEvidencePreviewController: null,
-    fixEligibility: null,
-    fixEligibilityStatus: "idle",
-    fixEligibilityRequestGeneration: 0,
-    fixHistory: [],
-    fixHistoryNextCursor: "",
-    fixHistoryHasMore: false,
-    fixHistoryStatus: "idle",
-    fixHistoryRequestGeneration: 0,
-    fixHistoryViewCursor: "",
-    fixHistoryCurrentIssueAvailable: null,
-    fixHistoryStale: false,
-    fixHistoryError: null,
-    fixEvidenceEvaluatedAt: "",
-    fixActionMessage: "",
-    fixActionTone: "status",
-    activeModal: "",
-    modalSubmitting: false,
-    dialogReturnFocus: null,
-    activeRetractionAnnotationID: "",
-    attentionRefreshGeneration: 0,
-    directSessionRequestGeneration: 0,
-    issueReturnFocus: null,
-    sessionReturnFocus: null,
-    sessionReturnView: "",
-    attentionExpiryRefresh: false,
-    refreshNoticeTimer: 0,
-    sessions: [],
-    sessionsRequestGeneration: 0,
-    sessionLimit: pageLimits.sessions.initial,
-    sessionNextCursor: "",
-    sessionHasMore: false,
-    sessionServerScope: false,
-    selectedSessionID: "",
-    selectedEventTotal: 0,
-    selectedSessionDetail: null,
-    selectedOverview: null,
-    selectedDiagnosis: null,
-    events: [],
-    eventLimit: pageLimits.events.initial,
-    eventNextCursor: "",
-    eventHasMore: false,
-    findings: [],
-    findingNextCursor: "",
-    findingHasMore: false,
-    findingsMayHaveMore: false,
-    findingsStatus: "idle",
-    overviewStatus: "idle",
-    sessionOccurredAfter: "",
-    stats: null,
-    filters: { query: "", harness: "", capture: "", outcome: "", days: "" },
-    showAllEvents: false,
-    lastAction: "sessions",
-    sessionTab: "summary",
-  };
+        const pageLimits = Object.freeze({
+            sessions: { initial: 40, step: 40, maximum: 100 },
+            events: { initial: 100, step: 100, maximum: 500 },
+            findings: { page: 20 },
+            issues: { page: 20 },
+            familyMembers: { page: 20 },
+            occurrences: { page: 20 },
+            fixMonitoring: { page: 20 },
+            fixMonitoringDetail: { page: 20 },
+            fixRecurrences: { page: 20 },
+        });
+        const mutationRequestDeadlineMilliseconds = 15_000;
+        const initializationPollMilliseconds = 2_000;
+        const transcriptPollMilliseconds = 2_000;
+        const runtimeSchemaVersion = "belay.local-runtime.v1";
+        const updateSchemaVersion = "belay.update-check.v1";
+        const updateInstallCommand =
+            "curl -fsSL https://getbelay.vercel.app/install | bash";
+        const experienceCopy = Object.freeze({
+            current: Object.freeze({
+                navBrief: "Report",
+                navAttention: "Patterns",
+                navSessions: "Sessions",
+                navHabits: "Habits",
+                briefEyebrow: "Belay Report",
+                briefLoading: "Preparing your report…",
+                briefErrorTitle: "Report unavailable",
+                briefErrorDetail: "Belay could not prepare the report. Patterns and Sessions remain available.",
+                briefOpenAttention: "View all patterns",
+                briefOpenSessions: "View sessions",
+                briefRecentEmptyDetail: "Use /belay in Claude Code or $belay in Codex to review the top issue.",
+                attentionAriaLabel: "Recurring patterns",
+                attentionEyebrow: "Across your agent sessions",
+                attentionHeading: "Patterns",
+                attentionStatus: "Pattern status",
+                attentionBackLabel: "Back to patterns",
+                attentionEmptyDetail: "Refresh Patterns before relying on this result.",
+                attentionFilterSummary: "Filter patterns",
+                sessionsHeading: "Sessions",
+            }),
+            "value-first": Object.freeze({
+                navBrief: "Report",
+                navAttention: "Patterns",
+                navSessions: "Sessions",
+                navHabits: "Habits",
+                briefEyebrow: "Belay Report",
+                briefLoading: "Preparing your report…",
+                briefErrorTitle: "Report unavailable",
+                briefErrorDetail: "Belay could not prepare the report. Patterns and Sessions remain available.",
+                briefOpenAttention: "View all patterns",
+                briefOpenSessions: "View sessions",
+                briefRecentEmptyDetail: "Use /belay in Claude Code or $belay in Codex to review the top issue.",
+                attentionAriaLabel: "Recurring patterns",
+                attentionEyebrow: "Across your agent sessions",
+                attentionHeading: "Patterns",
+                attentionStatus: "Pattern status",
+                attentionBackLabel: "Back to patterns",
+                attentionEmptyDetail: "Refresh Patterns before relying on this result.",
+                attentionFilterSummary: "Filter patterns",
+                sessionsHeading: "Sessions",
+            }),
+        });
+        const explicitOutcomes = new Set(["succeeded", "failed", "interrupted"]);
+        const issueCatalog = Object.freeze({
+            "issue.explicit_command_failure": Object.freeze({
+                title: "Command failed",
+                explanation: "The agent reported that a command failed.",
+                action: "Inspect failed command evidence",
+            }),
+            "issue.explicit_tool_failure": Object.freeze({
+                title: "Tool call failed",
+                explanation: "The agent reported that a tool call failed.",
+                caveat: "Belay does not know why it failed or whether a later attempt succeeded.",
+                action: "Inspect cited events",
+            }),
+            "issue.repeated_command_attempts": Object.freeze({
+                title: "Command repeatedly attempted",
+                explanation: "Belay recorded the same minimized command pattern several times close together.",
+                action: "Inspect matching sessions",
+                experimental: true,
+            }),
+            "issue.explicit_permission_denial": Object.freeze({
+                title: "Permission denied",
+                explanation: "The agent reported that a permission request was denied.",
+                action: "Inspect permission evidence",
+            }),
+            "issue.verification_not_observed": Object.freeze({
+                title: "No recognized verification command observed",
+                explanation: "After a recorded file change, Belay did not see a test or verification command it recognizes before the session ended.",
+                action: "Inspect verification evidence",
+                evidenceGap: true,
+            }),
+            "issue.retained_verification_gap_after_changes": Object.freeze({
+                title: "No recognized verification retained after changes",
+                explanation: "Belay's retained evidence contains no recognized verification command after the final recorded file change and before the session ended.",
+                caveat: "This does not show that verification did not occur; Belay only checks supported commands in retained activity.",
+                action: "Inspect cited events",
+                evidenceGap: true,
+            }),
+            "issue.unresolved_verification_failure_at_completion": Object.freeze({
+                title: "Verification still failed at session end",
+                explanation: "A verification command explicitly failed and no later successful verification was observed before session end.",
+                action: "Inspect verification evidence",
+            }),
+            "issue.numbat_finding": Object.freeze({
+                title: "Imported finding without an explanation",
+                explanation: "Belay stored an imported finding, but no reviewed Belay explanation is available for it.",
+                caveat: "Belay does not infer its meaning, impact, or a recommended action.",
+                action: "Review the cited events",
+            }),
+        });
+        const sourceSignalCatalog = Object.freeze({
+            "numbat/tamper.guardrails_off": Object.freeze({
+                title: "Fewer approval prompts enabled",
+                explanation: "Belay recorded a setting that lets actions already permitted by the agent run without asking for approval each time.",
+                caveat: "This setting may be intentional. The record does not show whether an action bypassed a prompt or caused harm.",
+                action: "Review the current agent permission mode. If this was intentional, no change may be needed.",
+            }),
+        });
+        const analysisQualifiers = Object.freeze({
+            pending: "This result may be out of date while Belay analyzes the session again.",
+            failed: "Belay could not refresh this result; it may be out of date.",
+            truncated: "Only part of the session was analyzed; other findings may be missing.",
+            unknown: "Belay cannot confirm whether this result is current or complete.",
+        });
+        const fixMonitoringCatalog = Object.freeze({
+            matching_evidence_observed: Object.freeze({
+                title: "Same finding observed later",
+                detail: "This does not establish causality or whether the attempted change worked.",
+                tone: "attention",
+            }),
+            monitoring_incomplete: Object.freeze({
+                title: "Monitoring is incomplete.",
+                detail: "Some later Local activity is pending, failed, truncated, or only partially analyzed.",
+                tone: "pending",
+            }),
+            awaiting_later_evidence: Object.freeze({
+                title: "Waiting for later sessions",
+                detail: "No comparable completed Local activity is available yet.",
+                tone: "neutral",
+            }),
+            no_later_match_observed: Object.freeze({
+                title: "No later matching evidence was observed in completed Local analysis.",
+                detail: "This does not verify resolution.",
+                tone: "neutral",
+            }),
+            comparison_unavailable: Object.freeze({
+                title: "Later sessions cannot be compared",
+                detail: "Belay cannot compare this attempt with later activity under the current rules.",
+                tone: "neutral",
+            }),
+            retracted: Object.freeze({
+                title: "Attempt record retracted — no longer monitored.",
+                detail: "",
+                tone: "neutral",
+            }),
+            unknown: Object.freeze({
+                title: "Monitoring status unavailable.",
+                detail: "",
+                tone: "neutral",
+            }),
+        });
+        const canonicalUUIDv7Pattern =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+        const fixChangeCatalog = Object.freeze([
+            Object.freeze({
+                value: "code_change",
+                label: "Code change",
+                description: "Source or test code changed.",
+            }),
+            Object.freeze({
+                value: "configuration_change",
+                label: "Configuration change",
+                description: "Project/application configuration changed.",
+            }),
+            Object.freeze({
+                value: "dependency_change",
+                label: "Dependency change",
+                description: "Dependency version or lock state changed.",
+            }),
+            Object.freeze({
+                value: "permission_change",
+                label: "Permission change",
+                description: "Access or permission configuration changed.",
+            }),
+            Object.freeze({
+                value: "environment_change",
+                label: "Environment change",
+                description: "Local runtime, toolchain, or environment changed.",
+            }),
+            Object.freeze({
+                value: "agent_instruction",
+                label: "Agent instruction",
+                description: "User-level agent instruction changed.",
+            }),
+            Object.freeze({
+                value: "project_rule",
+                label: "Project rule",
+                description: "Repository/project agent rule changed.",
+            }),
+            Object.freeze({
+                value: "monitor_hook",
+                label: "Agent monitoring setup",
+                description: "Agent monitoring hook/configuration changed.",
+            }),
+            Object.freeze({
+                value: "other",
+                label: "Other",
+                description: "A deliberate category outside the listed choices.",
+            }),
+        ]);
+        const fixRetractionCatalog = Object.freeze([
+            Object.freeze({
+                value: "recorded_by_mistake",
+                label: "Recorded by mistake",
+            }),
+            Object.freeze({
+                value: "superseded",
+                label: "Replaced by another attempt record",
+            }),
+            Object.freeze({
+                value: "other",
+                label: "Other",
+            }),
+        ]);
+        const fixEligibilityMessages = Object.freeze({
+            analysis_not_current: "Recording is unavailable until Belay finishes updating this finding.",
+            experimental_signal: "An attempt cannot be recorded for an experimental finding.",
+            evidence_gap: "An attempt cannot be recorded for an evidence gap.",
+            scope_unavailable: "Belay does not have enough project information to compare this finding with later sessions.",
+        });
+        const config = globalThis.BELAY_LOCAL_CONFIG || {};
+        const state = {
+            token: resolveToken(config),
+            apiBase: normalizeApiBase(config.apiBase),
+            experience: "current",
+            activeView: "brief",
+            initialization: null,
+            initializationRequestInFlight: false,
+            initializationPollGeneration: 0,
+            initializationPollTimer: 0,
+            transcriptStatus: null,
+            transcriptStatusStale: false,
+            transcriptRequestInFlight: false,
+            transcriptPollGeneration: 0,
+            transcriptPollTimer: 0,
+            updateStatus: null,
+            updatePollTimer: 0,
+            developerBrief: null,
+            briefStatus: "idle",
+            briefError: "",
+            briefRequestGeneration: 0,
+            briefSelectionID: "",
+            userInsights: null,
+            reportHabits: null,
+            reportHabitsStatus: "idle",
+            reportHabitsRequestGeneration: 0,
+            habitsStatus: "idle",
+            habitsSelectedKey: "",
+            habitsTab: "change",
+            habitsOpenInsight: 0,
+            habitsError: "",
+            habitsRequestGeneration: 0,
+            missionPackRequestGeneration: 0,
+            missionPackCacheGeneration: 0,
+            missionPackRequestController: null,
+            missionPackIssue: null,
+            missionPack: null,
+            reportEvidenceIssueID: "",
+            attentionMode: "issues",
+            costIssues: [],
+            costIssueStatus: "idle",
+            costIssueError: "",
+            costIssueRequestGeneration: 0,
+            issues: createAttentionFamilyBucket(),
+            evidenceGaps: createIssueBucket("evidence_gap"),
+            issueFilters: {
+                severity: "",
+                harness: "",
+                origin: "",
+                analysisStatus: "",
+                experimental: false,
+            },
+            selectedFamily: null,
+            selectedFamilyViewCursor: "",
+            familyMembers: [],
+            familyMemberNextCursor: "",
+            familyMemberHasMore: false,
+            familyMemberStatus: "idle",
+            familyMemberError: "",
+            familyMemberRequestGeneration: 0,
+            familyReturnFocus: null,
+            fixMonitoring: createFixMonitoringBucket(),
+            fixMonitoringFilters: {
+                state: "",
+                changeKind: "",
+                severity: "",
+                harness: "",
+                issueID: "",
+                recordedAfter: "",
+                includeRetracted: false,
+            },
+            selectedIssueID: "",
+            selectedIssueKind: "",
+            selectedIssueSource: "",
+            selectedIssueFamilyID: "",
+            selectedIssueEvidenceContext: "",
+            selectedDrivingAnnotationID: "",
+            selectedIssue: null,
+            selectedIssueCatalog: null,
+            selectedGlobalAnalysisCoverage: null,
+            selectedIssueViewCursor: "",
+            occurrences: [],
+            occurrenceNextCursor: "",
+            occurrenceHasMore: false,
+            occurrenceStatus: "idle",
+            occurrenceRequestGeneration: 0,
+            issueEvidencePreview: createIssueEvidencePreview(),
+            issueEvidencePreviewRequestGeneration: 0,
+            issueEvidencePreviewController: null,
+            fixEligibility: null,
+            fixEligibilityStatus: "idle",
+            fixEligibilityRequestGeneration: 0,
+            fixHistory: [],
+            fixHistoryNextCursor: "",
+            fixHistoryHasMore: false,
+            fixHistoryStatus: "idle",
+            fixHistoryRequestGeneration: 0,
+            fixHistoryViewCursor: "",
+            fixHistoryCurrentIssueAvailable: null,
+            fixHistoryStale: false,
+            fixHistoryError: null,
+            fixEvidenceEvaluatedAt: "",
+            fixActionMessage: "",
+            fixActionTone: "status",
+            activeModal: "",
+            modalSubmitting: false,
+            dialogReturnFocus: null,
+            activeRetractionAnnotationID: "",
+            attentionRefreshGeneration: 0,
+            directSessionRequestGeneration: 0,
+            issueReturnFocus: null,
+            sessionReturnFocus: null,
+            sessionReturnView: "",
+            attentionExpiryRefresh: false,
+            refreshNoticeTimer: 0,
+            sessions: [],
+            sessionsRequestGeneration: 0,
+            sessionLimit: pageLimits.sessions.initial,
+            sessionNextCursor: "",
+            sessionHasMore: false,
+            sessionServerScope: false,
+            selectedSessionID: "",
+            selectedEventTotal: 0,
+            selectedSessionDetail: null,
+            selectedOverview: null,
+            selectedDiagnosis: null,
+            events: [],
+            eventLimit: pageLimits.events.initial,
+            eventNextCursor: "",
+            eventHasMore: false,
+            findings: [],
+            findingNextCursor: "",
+            findingHasMore: false,
+            findingsMayHaveMore: false,
+            findingsStatus: "idle",
+            overviewStatus: "idle",
+            sessionOccurredAfter: "",
+            stats: null,
+            filters: { query: "", harness: "", capture: "", outcome: "", days: "" },
+            showAllEvents: false,
+            lastAction: "sessions",
+            sessionTab: "summary",
+        };
 
-  const elements = {
-    appShell: document.querySelector("#app-shell"),
-    initializationBanner: document.querySelector("#initialization-banner"),
-    updateNotice: document.querySelector("#update-notice"),
-    updateNoticeLabel: document.querySelector("#update-notice-label"),
-    updateModalLayer: document.querySelector("#update-modal-layer"),
-    updateDialog: document.querySelector("#update-dialog"),
-    updateClose: document.querySelector("#update-close"),
-    updateCurrentVersion: document.querySelector("#update-current-version"),
-    updateLatestVersion: document.querySelector("#update-latest-version"),
-    updateReleaseNote: document.querySelector("#update-release-note"),
-    updateCopyCommand: document.querySelector("#update-copy-command"),
-    updateAlert: document.querySelector("#update-alert"),
-    updateSkip: document.querySelector("#update-skip"),
-    updateRemind: document.querySelector("#update-remind"),
-    navBrief: document.querySelector("#nav-brief"),
-    navBriefLabel: document.querySelector("#nav-brief-label"),
-    navAttention: document.querySelector("#nav-attention"),
-    navAttentionLabel: document.querySelector("#nav-attention-label"),
-    navSessions: document.querySelector("#nav-sessions"),
-    navSessionsLabel: document.querySelector("#nav-sessions-label"),
-    briefView: document.querySelector("#brief-view"),
-    briefEyebrow: document.querySelector("#brief-eyebrow"),
-    briefHeading: document.querySelector("#brief-heading"),
-    briefWindow: document.querySelector("#brief-window"),
-    briefStatus: document.querySelector("#brief-status"),
-    briefSessionCount: document.querySelector("#brief-session-count"),
-    briefAgentCount: document.querySelector("#brief-agent-count"),
-    briefOutcomeCount: document.querySelector("#brief-outcome-count"),
-    briefLatestActivity: document.querySelector("#brief-latest-activity"),
-    reportSparkline: document.querySelector("#report-sparkline"),
-    transcriptRefreshStatus: document.querySelector(
-      "#transcript-refresh-status",
-    ),
-    transcriptWithCount: document.querySelector("#transcript-with-count"),
-    transcriptPartialCount: document.querySelector(
-      "#transcript-partial-count",
-    ),
-    transcriptWithoutCount: document.querySelector(
-      "#transcript-without-count",
-    ),
-    transcriptOnlyCount: document.querySelector("#transcript-only-count"),
-    transcriptSessionList: document.querySelector(
-      "#transcript-session-list",
-    ),
-    transcriptEmpty: document.querySelector("#transcript-empty"),
-    briefLoading: document.querySelector("#brief-loading"),
-    briefLoadingText: document.querySelector("#brief-loading-text"),
-    briefError: document.querySelector("#brief-error"),
-    briefErrorTitle: document.querySelector("#brief-error-title"),
-    briefErrorDetail: document.querySelector("#brief-error-detail"),
-    briefRetry: document.querySelector("#brief-retry"),
-    briefContent: document.querySelector("#brief-content"),
-    briefActionList: document.querySelector("#brief-action-list"),
-    briefActionsEmpty: document.querySelector("#brief-actions-empty"),
-    briefActionsEmptyTitle: document.querySelector(
-      "#brief-actions-empty-title",
-    ),
-    briefActionsEmptyDetail: document.querySelector(
-      "#brief-actions-empty-detail",
-    ),
-    briefRecentList: document.querySelector("#brief-recent-list"),
-    briefRecentEmpty: document.querySelector("#brief-recent-empty"),
-    briefRecentEmptyTitle: document.querySelector(
-      "#brief-recent-empty-title",
-    ),
-    briefRecentEmptyDetail: document.querySelector(
-      "#brief-recent-empty-detail",
-    ),
-    briefAgentSummary: document.querySelector("#brief-agent-summary"),
-    briefCoverage: document.querySelector("#brief-coverage"),
-    briefCoverageSummary: document.querySelector("#brief-coverage-summary"),
-    briefLimitations: document.querySelector("#brief-limitations"),
-    briefSources: document.querySelector("#brief-sources"),
-    briefOpenAttention: document.querySelector("#brief-open-attention"),
-    briefOpenSessions: document.querySelector("#brief-open-sessions"),
-    missionPackModalLayer: document.querySelector(
-      "#mission-pack-modal-layer",
-    ),
-    missionPackDialog: document.querySelector("#mission-pack-dialog"),
-    missionPackTitle: document.querySelector("#mission-pack-dialog-title"),
-    missionPackClose: document.querySelector("#mission-pack-close"),
-    missionPackDone: document.querySelector("#mission-pack-done"),
-    missionPackLoading: document.querySelector("#mission-pack-loading"),
-    missionPackError: document.querySelector("#mission-pack-error"),
-    missionPackErrorDetail: document.querySelector(
-      "#mission-pack-error-detail",
-    ),
-    missionPackRetry: document.querySelector("#mission-pack-retry"),
-    missionPackContent: document.querySelector("#mission-pack-content"),
-    missionPackMetadata: document.querySelector("#mission-pack-metadata"),
-    missionPackSections: document.querySelector("#mission-pack-sections"),
-    missionPackSize: document.querySelector("#mission-pack-size"),
-    missionPackCopyClaude: document.querySelector(
-      "#mission-pack-copy-claude",
-    ),
-    missionPackCopyCodex: document.querySelector("#mission-pack-copy-codex"),
-    missionPackShowEvidence: document.querySelector(
-      "#mission-pack-show-evidence",
-    ),
-    reportEvidenceModalLayer: document.querySelector(
-      "#report-evidence-modal-layer",
-    ),
-    reportEvidenceDialog: document.querySelector("#report-evidence-dialog"),
-    reportEvidenceTitle: document.querySelector(
-      "#report-evidence-dialog-title",
-    ),
-    reportEvidenceClose: document.querySelector("#report-evidence-close"),
-    reportEvidenceDone: document.querySelector("#report-evidence-done"),
-    reportEvidenceCopyClaude: document.querySelector(
-      "#report-evidence-copy-claude",
-    ),
-    reportEvidenceCopyCodex: document.querySelector(
-      "#report-evidence-copy-codex",
-    ),
-    reportEvidenceExcerpts: document.querySelector(
-      "#report-evidence-excerpts",
-    ),
-    reportEvidenceFix: document.querySelector("#report-evidence-fix"),
-    attentionNavCount: document.querySelector("#attention-nav-count"),
-    attentionView: document.querySelector("#attention-view"),
-    sessionsView: document.querySelector("#sessions-view"),
-    navHabits: document.querySelector("#nav-habits"),
-    navHabitsLabel: document.querySelector("#nav-habits-label"),
-    habitsView: document.querySelector("#habits-view"),
-    habitsHeading: document.querySelector("#habits-heading"),
-    habitsStatus: document.querySelector("#habits-status"),
-    habitsLoading: document.querySelector("#habits-loading"),
-    habitsError: document.querySelector("#habits-error"),
-    habitsErrorDetail: document.querySelector("#habits-error-detail"),
-    habitsRetry: document.querySelector("#habits-retry"),
-    habitsContent: document.querySelector("#habits-content"),
-    habitsEmpty: document.querySelector("#habits-empty"),
-    habitsList: document.querySelector("#habits-list"),
-    habitsAbout: document.querySelector("#habits-about"),
-    habitsLimitations: document.querySelector("#habits-limitations"),
-    habitsWindow: document.querySelector("#habits-window"),
-    reportHabitsList: document.querySelector("#report-habits-list"),
-    reportHabitsEmpty: document.querySelector("#report-habits-empty"),
-    reportHabitsStatus: document.querySelector("#report-habits-status"),
-    reportHabitsOpen: document.querySelector("#report-habits-open"),
-    reportHabitSummary: document.querySelector("#report-habit-summary"),
-    habitsDebriefAll: document.querySelector("#habits-debrief-all"),
-    habitsDetail: document.querySelector("#habits-detail"),
-    habitsOlder: document.querySelector("#habits-older"),
-    attentionListPane: document.querySelector("#attention-list-pane"),
-    attentionModeIssues: document.querySelector("#attention-mode-issues"),
-    attentionModeSafety: document.querySelector("#attention-mode-safety"),
-    attentionEyebrow: document.querySelector("#attention-eyebrow"),
-    attentionHeading: document.querySelector("#attention-heading"),
-    attentionStatusLabel: document.querySelector("#attention-status-label"),
-    attentionDetailPane: document.querySelector("#attention-detail-pane"),
-    attentionScroll: document.querySelector(".attention-scroll"),
-    costIssuesSection: document.querySelector("#cost-issues-section"),
-    costIssueCount: document.querySelector("#cost-issue-count"),
-    costIssueList: document.querySelector("#cost-issue-list"),
-    costIssuesLoading: document.querySelector("#cost-issues-loading"),
-    costIssuesEmpty: document.querySelector("#cost-issues-empty"),
-    costIssuesError: document.querySelector("#cost-issues-error"),
-    costIssuesRetry: document.querySelector("#cost-issues-retry"),
-    safetyContent: null,
-    stableIssuesSection: document.querySelector("#stable-issues-section"),
-    evidenceGapsSection: document.querySelector("#evidence-gaps-section"),
-    fixMonitoringSection: document.querySelector("#fix-monitoring-section"),
-    coveragePanel: document.querySelector("#coverage-panel"),
-    attentionCount: document.querySelector("#attention-count"),
-    attentionRefreshNotice: document.querySelector("#attention-refresh-notice"),
-    coverageCurrent: document.querySelector("#coverage-current"),
-    coveragePending: document.querySelector("#coverage-pending"),
-    coverageFailed: document.querySelector("#coverage-failed"),
-    coverageTruncated: document.querySelector("#coverage-truncated"),
-    coverageUnscoped: document.querySelector("#coverage-unscoped"),
-    coverageThrough: document.querySelector("#coverage-through"),
-    coverageCompleteness: document.querySelector("#coverage-completeness"),
-    attentionFilters: document.querySelector("#attention-filters"),
-    issueFilterSeverity: document.querySelector("#issue-filter-severity"),
-    issueFilterHarness: document.querySelector("#issue-filter-harness"),
-    issueFilterOrigin: document.querySelector("#issue-filter-origin"),
-    issueFilterStatus: document.querySelector("#issue-filter-status"),
-    issueFilterExperimental: document.querySelector(
-      "#issue-filter-experimental",
-    ),
-    clearAttentionFilters: document.querySelector("#clear-attention-filters"),
-    attentionFilterNote: document.querySelector("#attention-filter-note"),
-    issueFilterDisclosure: document.querySelector("#issue-filter-disclosure"),
-    fixMonitoringFilters: document.querySelector("#fix-monitoring-filters"),
-    fixMonitoringFilterState: document.querySelector(
-      "#fix-monitoring-filter-state",
-    ),
-    fixMonitoringFilterChangeKind: document.querySelector(
-      "#fix-monitoring-filter-change-kind",
-    ),
-    fixMonitoringFilterSeverity: document.querySelector(
-      "#fix-monitoring-filter-severity",
-    ),
-    fixMonitoringFilterHarness: document.querySelector(
-      "#fix-monitoring-filter-harness",
-    ),
-    fixMonitoringFilterIssueID: document.querySelector(
-      "#fix-monitoring-filter-issue-id",
-    ),
-    fixMonitoringFilterRecordedAfter: document.querySelector(
-      "#fix-monitoring-filter-recorded-after",
-    ),
-    fixMonitoringFilterRetracted: document.querySelector(
-      "#fix-monitoring-filter-retracted",
-    ),
-    clearFixMonitoringFilters: document.querySelector(
-      "#clear-fix-monitoring-filters",
-    ),
-    fixMonitoringFilterNote: document.querySelector(
-      "#fix-monitoring-filter-note",
-    ),
-    fixMonitoringStatus: document.querySelector("#fix-monitoring-status"),
-    fixMonitoringCount: document.querySelector("#fix-monitoring-count"),
-    fixMonitoringList: document.querySelector("#fix-monitoring-list"),
-    fixMonitoringLoading: document.querySelector("#fix-monitoring-loading"),
-    fixMonitoringEmpty: document.querySelector("#fix-monitoring-empty"),
-    fixMonitoringEmptyTitle: document.querySelector(
-      "#fix-monitoring-empty-title",
-    ),
-    fixMonitoringEmptyDetail: document.querySelector(
-      "#fix-monitoring-empty-detail",
-    ),
-    fixMonitoringPagination: document.querySelector(
-      "#fix-monitoring-pagination",
-    ),
-    fixMonitoringPageStatus: document.querySelector(
-      "#fix-monitoring-page-status",
-    ),
-    fixMonitoringLoadMore: document.querySelector(
-      "#fix-monitoring-load-more",
-    ),
-    issueCount: document.querySelector("#issue-count"),
-    issueList: document.querySelector("#issue-list"),
-    issuesLoading: document.querySelector("#issues-loading"),
-    issuesEmpty: document.querySelector("#issues-empty"),
-    issuesEmptyTitle: document.querySelector("#issues-empty-title"),
-    issuesEmptyDetail: document.querySelector("#issues-empty-detail"),
-    issuesPagination: document.querySelector("#issues-pagination"),
-    issuesPageStatus: document.querySelector("#issues-page-status"),
-    issuesLoadMore: document.querySelector("#issues-load-more"),
-    evidenceGapCount: document.querySelector("#evidence-gap-count"),
-    evidenceGapList: document.querySelector("#evidence-gap-list"),
-    evidenceGapsLoading: document.querySelector("#evidence-gaps-loading"),
-    evidenceGapsEmpty: document.querySelector("#evidence-gaps-empty"),
-    evidenceGapsEmptyTitle: document.querySelector(
-      "#evidence-gaps-empty-title",
-    ),
-    evidenceGapsEmptyDetail: document.querySelector(
-      "#evidence-gaps-empty-detail",
-    ),
-    evidenceGapsPagination: document.querySelector(
-      "#evidence-gaps-pagination",
-    ),
-    evidenceGapsPageStatus: document.querySelector(
-      "#evidence-gaps-page-status",
-    ),
-    evidenceGapsLoadMore: document.querySelector(
-      "#evidence-gaps-load-more",
-    ),
-    attentionWelcome: document.querySelector("#attention-welcome"),
-    familyDetail: document.querySelector("#family-detail"),
-    familyBackButton: document.querySelector("#family-back-button"),
-    familyDetailHeading: document.querySelector("#family-detail-heading"),
-    familyDetailBadges: document.querySelector("#family-detail-badges"),
-    familyAnalysisQualifier: document.querySelector(
-      "#family-analysis-qualifier",
-    ),
-    familyObservation: document.querySelector("#family-observation"),
-    familyCaveat: document.querySelector("#family-caveat"),
-    familyNextAction: document.querySelector("#family-next-action"),
-    familySummary: document.querySelector("#family-summary"),
-    familyMemberCount: document.querySelector("#family-member-count"),
-    familyMemberList: document.querySelector("#family-member-list"),
-    familyMembersLoading: document.querySelector("#family-members-loading"),
-    familyMembersEmpty: document.querySelector("#family-members-empty"),
-    familyMembersEmptyDetail: document.querySelector(
-      "#family-members-empty-detail",
-    ),
-    familyMembersPagination: document.querySelector(
-      "#family-members-pagination",
-    ),
-    familyMembersPageStatus: document.querySelector(
-      "#family-members-page-status",
-    ),
-    familyMembersLoadMore: document.querySelector(
-      "#family-members-load-more",
-    ),
-    issueDetail: document.querySelector("#issue-detail"),
-    issueBackButton: document.querySelector("#issue-back-button"),
-    issueDetailKind: document.querySelector("#issue-detail-kind"),
-    issueDetailHeading: document.querySelector("#issue-detail-heading"),
-    issueDetailBadges: document.querySelector("#issue-detail-badges"),
-    issueAnalysisQualifier: document.querySelector(
-      "#issue-analysis-qualifier",
-    ),
-    issueExplanation: document.querySelector("#issue-explanation"),
-    issueScopeDisclosure: document.querySelector("#issue-scope-disclosure"),
-    issueNextAction: document.querySelector("#issue-next-action"),
-    issueExplanationSection: document.querySelector(
-      "#issue-explanation-section",
-    ),
-    issueEvidencePreview: document.querySelector("#issue-evidence-preview"),
-    issueEvidencePreviewCount: document.querySelector(
-      "#issue-evidence-preview-count",
-    ),
-    issueEvidencePreviewDisclosure: document.querySelector(
-      "#issue-evidence-preview-disclosure",
-    ),
-    issueEvidencePreviewList: document.querySelector(
-      "#issue-evidence-preview-list",
-    ),
-    issueEvidencePreviewAll: document.querySelector(
-      "#issue-evidence-preview-all",
-    ),
-    issueTechnicalDetails: document.querySelector("#issue-technical-details"),
-    issueMetadata: document.querySelector("#issue-metadata"),
-    fingerprintPanel: document.querySelector("#fingerprint-panel"),
-    issueFingerprint: document.querySelector("#issue-fingerprint"),
-    copyIssueFingerprint: document.querySelector("#copy-issue-fingerprint"),
-    recordFixAttempt: document.querySelector("#record-fix-attempt"),
-    fixAttemptsSection: document.querySelector("#fix-attempts-section"),
-    fixEligibilityStatus: document.querySelector("#fix-eligibility-status"),
-    fixMonitoringDetailStatus: document.querySelector(
-      "#fix-monitoring-detail-status",
-    ),
-    fixActionStatus: document.querySelector("#fix-action-status"),
-    fixHistoryList: document.querySelector("#fix-history-list"),
-    fixHistoryLoading: document.querySelector("#fix-history-loading"),
-    fixHistoryEmpty: document.querySelector("#fix-history-empty"),
-    fixEvidenceEvaluated: document.querySelector("#fix-evidence-evaluated"),
-    fixHistoryPagination: document.querySelector("#fix-history-pagination"),
-    fixHistoryPageStatus: document.querySelector("#fix-history-page-status"),
-    fixHistoryLoadMore: document.querySelector("#fix-history-load-more"),
-    occurrenceCount: document.querySelector("#occurrence-count"),
-    occurrenceList: document.querySelector("#occurrence-list"),
-    occurrencesLoading: document.querySelector("#occurrences-loading"),
-    occurrencesPagination: document.querySelector("#occurrences-pagination"),
-    occurrencesPageStatus: document.querySelector("#occurrences-page-status"),
-    occurrencesLoadMore: document.querySelector("#occurrences-load-more"),
-    matchingSection: document.querySelector("#matching-section"),
-    refreshButton: document.querySelector("#refresh-button"),
-    sessionPanel: document.querySelector(".session-panel"),
-    timelinePanel: document.querySelector(".timeline-panel"),
-    sessionCount: document.querySelector("#session-count"),
-    overviewSessionCount: document.querySelector("#overview-session-count"),
-    overviewEventCount: document.querySelector("#overview-event-count"),
-    overviewFindingCount: document.querySelector("#overview-finding-count"),
-    overviewHarnesses: document.querySelector("#overview-harnesses"),
-    overviewFreshness: document.querySelector("#overview-freshness"),
-    sessionSearch: document.querySelector("#session-search"),
-    filterHarness: document.querySelector("#filter-harness"),
-    filterCapture: document.querySelector("#filter-capture"),
-    filterOutcome: document.querySelector("#filter-outcome"),
-    filterDate: document.querySelector("#filter-date"),
-    clearFilters: document.querySelector("#clear-filters"),
-    sessionScopeNote: document.querySelector("#session-scope-note"),
-    sessionList: document.querySelector("#session-list"),
-    sessionsPagination: document.querySelector("#sessions-pagination"),
-    sessionsPageStatus: document.querySelector("#sessions-page-status"),
-    sessionsLoadMore: document.querySelector("#sessions-load-more"),
-    sessionsHeading: document.querySelector("#sessions-heading"),
-    sessionsLoading: document.querySelector("#sessions-loading"),
-    sessionsEmpty: document.querySelector("#sessions-empty"),
-    welcomeState: document.querySelector("#welcome-state"),
-    selectedMeta: document.querySelector("#selected-meta"),
-    sessionTabSummary: document.querySelector("#session-tab-summary"),
-    sessionTabTimeline: document.querySelector("#session-tab-timeline"),
-    sessionTabTimelineCount: document.querySelector("#session-tab-timeline-count"),
-    sessionSummaryTab: document.querySelector("#session-summary-tab"),
-    sessionTimelineTab: document.querySelector("#session-timeline-tab"),
-    sessionVisual: document.querySelector("#session-visual"),
-    timelineView: document.querySelector("#timeline-view"),
-    backButton: document.querySelector("#back-button"),
-    selectedAvatar: document.querySelector("#selected-avatar"),
-    selectedHarness: document.querySelector("#selected-harness"),
-    selectedOutcome: document.querySelector("#selected-outcome"),
-    selectedHistorical: document.querySelector("#selected-historical"),
-    selectedSessionID: document.querySelector("#selected-session-id"),
-    copySelectedSession: document.querySelector("#copy-selected-session"),
-    selectedEventCount: document.querySelector("#selected-event-count"),
-    selectedDuration: document.querySelector("#selected-duration"),
-    selectedEndedAt: document.querySelector("#selected-ended-at"),
-    sessionDiagnosis: document.querySelector("#session-diagnosis"),
-    sessionDiagnosisHeading: document.querySelector(
-      "#session-diagnosis-heading",
-    ),
-    sessionDiagnosisStatus: document.querySelector(
-      "#session-diagnosis-status",
-    ),
-    sessionDiagnosisTitle: document.querySelector(
-      "#session-diagnosis-title",
-    ),
-    sessionDiagnosisDetail: document.querySelector(
-      "#session-diagnosis-detail",
-    ),
-    sessionDiagnosisActions: document.querySelector(
-      "#session-diagnosis-actions",
-    ),
-    sessionDiagnosisLimitations: document.querySelector(
-      "#session-diagnosis-limitations",
-    ),
-    overviewState: document.querySelector("#overview-state"),
-    overviewQuality: document.querySelector("#overview-quality"),
-    activityGrid: document.querySelector("#activity-grid"),
-    needsAttentionSummary: document.querySelector("#needs-attention-summary"),
-    observedWorkSummary: document.querySelector("#observed-work-summary"),
-    sessionHighlights: document.querySelector("#session-highlights"),
-    resourceList: document.querySelector("#resource-list"),
-    resourceDisclosure: document.querySelector("#resource-disclosure"),
-    findingList: document.querySelector("#finding-list"),
-    findingsPagination: document.querySelector("#findings-pagination"),
-    findingsPageStatus: document.querySelector("#findings-page-status"),
-    findingsLoadMore: document.querySelector("#findings-load-more"),
-    timelineFreshness: document.querySelector("#timeline-freshness"),
-    timelineScope: document.querySelector("#timeline-scope"),
-    allEventsToggle: document.querySelector("#all-events-toggle"),
-    eventList: document.querySelector("#event-list"),
-    eventsPagination: document.querySelector("#events-pagination"),
-    eventsPageStatus: document.querySelector("#events-page-status"),
-    eventsLoadMore: document.querySelector("#events-load-more"),
-    timelineLoading: document.querySelector("#timeline-loading"),
-    eventsEmpty: document.querySelector("#events-empty"),
-    errorBanner: document.querySelector("#error-banner"),
-    errorTitle: document.querySelector("#error-title"),
-    errorDetail: document.querySelector("#error-detail"),
-    errorRetry: document.querySelector("#error-retry"),
-    fixAttemptModalLayer: document.querySelector("#fix-attempt-modal-layer"),
-    fixAttemptDialog: document.querySelector("#fix-attempt-dialog"),
-    fixAttemptClose: document.querySelector("#fix-attempt-close"),
-    fixAttemptCancel: document.querySelector("#fix-attempt-cancel"),
-    fixAttemptConfirm: document.querySelector("#fix-attempt-confirm"),
-    fixAttemptAlert: document.querySelector("#fix-attempt-alert"),
-    fixCategoryFieldset: document.querySelector("#fix-category-fieldset"),
-    fixCategoryOptions: document.querySelector("#fix-category-options"),
-    fixDraftRecovery: document.querySelector("#fix-draft-recovery"),
-    abandonFixDraft: document.querySelector("#abandon-fix-draft"),
-    fixRetractionModalLayer: document.querySelector(
-      "#fix-retraction-modal-layer",
-    ),
-    fixRetractionDialog: document.querySelector("#fix-retraction-dialog"),
-    fixRetractionClose: document.querySelector("#fix-retraction-close"),
-    fixRetractionCancel: document.querySelector("#fix-retraction-cancel"),
-    fixRetractionConfirm: document.querySelector("#fix-retraction-confirm"),
-    fixRetractionAlert: document.querySelector("#fix-retraction-alert"),
-    fixRetractionFieldset: document.querySelector(
-      "#fix-retraction-fieldset",
-    ),
-    fixRetractionOptions: document.querySelector(
-      "#fix-retraction-options",
-    ),
-    fixRetractionRecovery: document.querySelector(
-      "#fix-retraction-recovery",
-    ),
-    abandonFixRetraction: document.querySelector(
-      "#abandon-fix-retraction",
-    ),
-  };
+        const elements = {
+            appShell: document.querySelector("#app-shell"),
+            initializationBanner: document.querySelector("#initialization-banner"),
+            updateNotice: document.querySelector("#update-notice"),
+            updateNoticeLabel: document.querySelector("#update-notice-label"),
+            updateModalLayer: document.querySelector("#update-modal-layer"),
+            updateDialog: document.querySelector("#update-dialog"),
+            updateClose: document.querySelector("#update-close"),
+            updateCurrentVersion: document.querySelector("#update-current-version"),
+            updateLatestVersion: document.querySelector("#update-latest-version"),
+            updateReleaseNote: document.querySelector("#update-release-note"),
+            updateCopyCommand: document.querySelector("#update-copy-command"),
+            updateAlert: document.querySelector("#update-alert"),
+            updateSkip: document.querySelector("#update-skip"),
+            updateRemind: document.querySelector("#update-remind"),
+            navBrief: document.querySelector("#nav-brief"),
+            navBriefLabel: document.querySelector("#nav-brief-label"),
+            navAttention: document.querySelector("#nav-attention"),
+            navAttentionLabel: document.querySelector("#nav-attention-label"),
+            navSessions: document.querySelector("#nav-sessions"),
+            navSessionsLabel: document.querySelector("#nav-sessions-label"),
+            briefView: document.querySelector("#brief-view"),
+            briefEyebrow: document.querySelector("#brief-eyebrow"),
+            briefHeading: document.querySelector("#brief-heading"),
+            briefWindow: document.querySelector("#brief-window"),
+            briefStatus: document.querySelector("#brief-status"),
+            briefSessionCount: document.querySelector("#brief-session-count"),
+            briefAgentCount: document.querySelector("#brief-agent-count"),
+            briefOutcomeCount: document.querySelector("#brief-outcome-count"),
+            briefLatestActivity: document.querySelector("#brief-latest-activity"),
+            reportSparkline: document.querySelector("#report-sparkline"),
+            transcriptRefreshStatus: document.querySelector(
+                "#transcript-refresh-status",
+            ),
+            transcriptWithCount: document.querySelector("#transcript-with-count"),
+            transcriptPartialCount: document.querySelector("#transcript-partial-count"),
+            transcriptWithoutCount: document.querySelector("#transcript-without-count"),
+            transcriptOnlyCount: document.querySelector("#transcript-only-count"),
+            transcriptSessionList: document.querySelector("#transcript-session-list"),
+            transcriptEmpty: document.querySelector("#transcript-empty"),
+            briefLoading: document.querySelector("#brief-loading"),
+            briefLoadingText: document.querySelector("#brief-loading-text"),
+            briefError: document.querySelector("#brief-error"),
+            briefErrorTitle: document.querySelector("#brief-error-title"),
+            briefErrorDetail: document.querySelector("#brief-error-detail"),
+            briefRetry: document.querySelector("#brief-retry"),
+            briefContent: document.querySelector("#brief-content"),
+            briefActionList: document.querySelector("#brief-action-list"),
+            briefActionsEmpty: document.querySelector("#brief-actions-empty"),
+            briefActionsEmptyTitle: document.querySelector(
+                "#brief-actions-empty-title",
+            ),
+            briefActionsEmptyDetail: document.querySelector(
+                "#brief-actions-empty-detail",
+            ),
+            briefRecentList: document.querySelector("#brief-recent-list"),
+            briefRecentEmpty: document.querySelector("#brief-recent-empty"),
+            briefRecentEmptyTitle: document.querySelector("#brief-recent-empty-title"),
+            briefRecentEmptyDetail: document.querySelector(
+                "#brief-recent-empty-detail",
+            ),
+            briefAgentSummary: document.querySelector("#brief-agent-summary"),
+            reportCoverageSummary: document.querySelector("#report-coverage-summary"),
+            reportCoverageStatus: document.querySelector("#report-coverage-status"),
+            reportCoverageWithTranscript: document.querySelector(
+                "#report-coverage-with-transcript",
+            ),
+            reportCoverageIncomplete: document.querySelector(
+                "#report-coverage-incomplete",
+            ),
+            reportCoverageOpen: document.querySelector("#report-coverage-open"),
+            briefActionsSection: document.querySelector(
+                '[aria-labelledby="brief-actions-heading"]',
+            ),
+            briefCoverage: document.querySelector("#brief-coverage"),
+            briefCoverageSummary: document.querySelector("#brief-coverage-summary"),
+            briefLimitations: document.querySelector("#brief-limitations"),
+            briefSources: document.querySelector("#brief-sources"),
+            briefOpenAttention: document.querySelector("#brief-open-attention"),
+            briefOpenSessions: document.querySelector("#brief-open-sessions"),
+            missionPackModalLayer: document.querySelector("#mission-pack-modal-layer"),
+            missionPackDialog: document.querySelector("#mission-pack-dialog"),
+            missionPackTitle: document.querySelector("#mission-pack-dialog-title"),
+            missionPackClose: document.querySelector("#mission-pack-close"),
+            missionPackDone: document.querySelector("#mission-pack-done"),
+            missionPackLoading: document.querySelector("#mission-pack-loading"),
+            missionPackError: document.querySelector("#mission-pack-error"),
+            missionPackErrorDetail: document.querySelector(
+                "#mission-pack-error-detail",
+            ),
+            missionPackRetry: document.querySelector("#mission-pack-retry"),
+            missionPackContent: document.querySelector("#mission-pack-content"),
+            missionPackMetadata: document.querySelector("#mission-pack-metadata"),
+            missionPackSections: document.querySelector("#mission-pack-sections"),
+            missionPackSize: document.querySelector("#mission-pack-size"),
+            missionPackCopyClaude: document.querySelector("#mission-pack-copy-claude"),
+            missionPackCopyCodex: document.querySelector("#mission-pack-copy-codex"),
+            missionPackShowEvidence: document.querySelector(
+                "#mission-pack-show-evidence",
+            ),
+            reportEvidenceModalLayer: document.querySelector(
+                "#report-evidence-modal-layer",
+            ),
+            reportEvidenceDialog: document.querySelector("#report-evidence-dialog"),
+            reportEvidenceTitle: document.querySelector(
+                "#report-evidence-dialog-title",
+            ),
+            reportEvidenceClose: document.querySelector("#report-evidence-close"),
+            reportEvidenceDone: document.querySelector("#report-evidence-done"),
+            reportEvidenceCopyClaude: document.querySelector(
+                "#report-evidence-copy-claude",
+            ),
+            reportEvidenceCopyCodex: document.querySelector(
+                "#report-evidence-copy-codex",
+            ),
+            reportEvidenceExcerpts: document.querySelector("#report-evidence-excerpts"),
+            reportEvidenceFix: document.querySelector("#report-evidence-fix"),
+            attentionNavCount: document.querySelector("#attention-nav-count"),
+            attentionView: document.querySelector("#attention-view"),
+            sessionsView: document.querySelector("#sessions-view"),
+            navHabits: document.querySelector("#nav-habits"),
+            navHabitsLabel: document.querySelector("#nav-habits-label"),
+            habitsView: document.querySelector("#habits-view"),
+            habitsHeading: document.querySelector("#habits-heading"),
+            habitsStatus: document.querySelector("#habits-status"),
+            habitsLoading: document.querySelector("#habits-loading"),
+            habitsError: document.querySelector("#habits-error"),
+            habitsErrorDetail: document.querySelector("#habits-error-detail"),
+            habitsRetry: document.querySelector("#habits-retry"),
+            habitsContent: document.querySelector("#habits-content"),
+            habitsEmpty: document.querySelector("#habits-empty"),
+            habitsList: document.querySelector("#habits-list"),
+            habitsAbout: document.querySelector("#habits-about"),
+            habitsLimitations: document.querySelector("#habits-limitations"),
+            habitsWindow: document.querySelector("#habits-window"),
+            reportHabitsList: document.querySelector("#report-habits-list"),
+            reportHabitsEmpty: document.querySelector("#report-habits-empty"),
+            reportHabitsStatus: document.querySelector("#report-habits-status"),
+            reportHabitsOpen: document.querySelector("#report-habits-open"),
+            reportHabitSummary: document.querySelector("#report-habit-summary"),
+            habitsDebriefAll: document.querySelector("#habits-debrief-all"),
+            habitsDetail: document.querySelector("#habits-detail"),
+            habitsOlder: document.querySelector("#habits-older"),
+            attentionListPane: document.querySelector("#attention-list-pane"),
+            attentionModeIssues: document.querySelector("#attention-mode-issues"),
+            attentionModeSafety: document.querySelector("#attention-mode-safety"),
+            attentionEyebrow: document.querySelector("#attention-eyebrow"),
+            attentionHeading: document.querySelector("#attention-heading"),
+            attentionStatusLabel: document.querySelector("#attention-status-label"),
+            attentionDetailPane: document.querySelector("#attention-detail-pane"),
+            attentionScroll: document.querySelector(".attention-scroll"),
+            costIssuesSection: document.querySelector("#cost-issues-section"),
+            costIssueCount: document.querySelector("#cost-issue-count"),
+            costIssueList: document.querySelector("#cost-issue-list"),
+            costIssuesLoading: document.querySelector("#cost-issues-loading"),
+            costIssuesEmpty: document.querySelector("#cost-issues-empty"),
+            costIssuesError: document.querySelector("#cost-issues-error"),
+            costIssuesRetry: document.querySelector("#cost-issues-retry"),
+            safetyContent: null,
+            stableIssuesSection: document.querySelector("#stable-issues-section"),
+            evidenceGapsSection: document.querySelector("#evidence-gaps-section"),
+            fixMonitoringSection: document.querySelector("#fix-monitoring-section"),
+            coveragePanel: document.querySelector("#coverage-panel"),
+            attentionCount: document.querySelector("#attention-count"),
+            attentionRefreshNotice: document.querySelector("#attention-refresh-notice"),
+            coverageCurrent: document.querySelector("#coverage-current"),
+            coveragePending: document.querySelector("#coverage-pending"),
+            coverageFailed: document.querySelector("#coverage-failed"),
+            coverageTruncated: document.querySelector("#coverage-truncated"),
+            coverageUnscoped: document.querySelector("#coverage-unscoped"),
+            coverageThrough: document.querySelector("#coverage-through"),
+            coverageCompleteness: document.querySelector("#coverage-completeness"),
+            attentionFilters: document.querySelector("#attention-filters"),
+            issueFilterSeverity: document.querySelector("#issue-filter-severity"),
+            issueFilterHarness: document.querySelector("#issue-filter-harness"),
+            issueFilterOrigin: document.querySelector("#issue-filter-origin"),
+            issueFilterStatus: document.querySelector("#issue-filter-status"),
+            issueFilterExperimental: document.querySelector(
+                "#issue-filter-experimental",
+            ),
+            clearAttentionFilters: document.querySelector("#clear-attention-filters"),
+            attentionFilterNote: document.querySelector("#attention-filter-note"),
+            issueFilterDisclosure: document.querySelector("#issue-filter-disclosure"),
+            fixMonitoringFilters: document.querySelector("#fix-monitoring-filters"),
+            fixMonitoringFilterState: document.querySelector(
+                "#fix-monitoring-filter-state",
+            ),
+            fixMonitoringFilterChangeKind: document.querySelector(
+                "#fix-monitoring-filter-change-kind",
+            ),
+            fixMonitoringFilterSeverity: document.querySelector(
+                "#fix-monitoring-filter-severity",
+            ),
+            fixMonitoringFilterHarness: document.querySelector(
+                "#fix-monitoring-filter-harness",
+            ),
+            fixMonitoringFilterIssueID: document.querySelector(
+                "#fix-monitoring-filter-issue-id",
+            ),
+            fixMonitoringFilterRecordedAfter: document.querySelector(
+                "#fix-monitoring-filter-recorded-after",
+            ),
+            fixMonitoringFilterRetracted: document.querySelector(
+                "#fix-monitoring-filter-retracted",
+            ),
+            clearFixMonitoringFilters: document.querySelector(
+                "#clear-fix-monitoring-filters",
+            ),
+            fixMonitoringFilterNote: document.querySelector(
+                "#fix-monitoring-filter-note",
+            ),
+            fixMonitoringStatus: document.querySelector("#fix-monitoring-status"),
+            fixMonitoringCount: document.querySelector("#fix-monitoring-count"),
+            fixMonitoringList: document.querySelector("#fix-monitoring-list"),
+            fixMonitoringLoading: document.querySelector("#fix-monitoring-loading"),
+            fixMonitoringEmpty: document.querySelector("#fix-monitoring-empty"),
+            fixMonitoringEmptyTitle: document.querySelector(
+                "#fix-monitoring-empty-title",
+            ),
+            fixMonitoringEmptyDetail: document.querySelector(
+                "#fix-monitoring-empty-detail",
+            ),
+            fixMonitoringPagination: document.querySelector(
+                "#fix-monitoring-pagination",
+            ),
+            fixMonitoringPageStatus: document.querySelector(
+                "#fix-monitoring-page-status",
+            ),
+            fixMonitoringLoadMore: document.querySelector("#fix-monitoring-load-more"),
+            issueCount: document.querySelector("#issue-count"),
+            issueList: document.querySelector("#issue-list"),
+            issuesLoading: document.querySelector("#issues-loading"),
+            issuesEmpty: document.querySelector("#issues-empty"),
+            issuesEmptyTitle: document.querySelector("#issues-empty-title"),
+            issuesEmptyDetail: document.querySelector("#issues-empty-detail"),
+            issuesPagination: document.querySelector("#issues-pagination"),
+            issuesPageStatus: document.querySelector("#issues-page-status"),
+            issuesLoadMore: document.querySelector("#issues-load-more"),
+            evidenceGapCount: document.querySelector("#evidence-gap-count"),
+            evidenceGapList: document.querySelector("#evidence-gap-list"),
+            evidenceGapsLoading: document.querySelector("#evidence-gaps-loading"),
+            evidenceGapsEmpty: document.querySelector("#evidence-gaps-empty"),
+            evidenceGapsEmptyTitle: document.querySelector(
+                "#evidence-gaps-empty-title",
+            ),
+            evidenceGapsEmptyDetail: document.querySelector(
+                "#evidence-gaps-empty-detail",
+            ),
+            evidenceGapsPagination: document.querySelector("#evidence-gaps-pagination"),
+            evidenceGapsPageStatus: document.querySelector(
+                "#evidence-gaps-page-status",
+            ),
+            evidenceGapsLoadMore: document.querySelector("#evidence-gaps-load-more"),
+            attentionWelcome: document.querySelector("#attention-welcome"),
+            familyDetail: document.querySelector("#family-detail"),
+            familyBackButton: document.querySelector("#family-back-button"),
+            familyDetailHeading: document.querySelector("#family-detail-heading"),
+            familyDetailBadges: document.querySelector("#family-detail-badges"),
+            familyAnalysisQualifier: document.querySelector(
+                "#family-analysis-qualifier",
+            ),
+            familyObservation: document.querySelector("#family-observation"),
+            familyCaveat: document.querySelector("#family-caveat"),
+            familyNextAction: document.querySelector("#family-next-action"),
+            familySummary: document.querySelector("#family-summary"),
+            familyMemberCount: document.querySelector("#family-member-count"),
+            familyMemberList: document.querySelector("#family-member-list"),
+            familyMembersLoading: document.querySelector("#family-members-loading"),
+            familyMembersEmpty: document.querySelector("#family-members-empty"),
+            familyMembersEmptyDetail: document.querySelector(
+                "#family-members-empty-detail",
+            ),
+            familyMembersPagination: document.querySelector(
+                "#family-members-pagination",
+            ),
+            familyMembersPageStatus: document.querySelector(
+                "#family-members-page-status",
+            ),
+            familyMembersLoadMore: document.querySelector("#family-members-load-more"),
+            issueDetail: document.querySelector("#issue-detail"),
+            issueBackButton: document.querySelector("#issue-back-button"),
+            issueDetailKind: document.querySelector("#issue-detail-kind"),
+            issueDetailHeading: document.querySelector("#issue-detail-heading"),
+            issueDetailBadges: document.querySelector("#issue-detail-badges"),
+            issueAnalysisQualifier: document.querySelector("#issue-analysis-qualifier"),
+            issueExplanation: document.querySelector("#issue-explanation"),
+            issueScopeDisclosure: document.querySelector("#issue-scope-disclosure"),
+            issueNextAction: document.querySelector("#issue-next-action"),
+            issueExplanationSection: document.querySelector(
+                "#issue-explanation-section",
+            ),
+            issueEvidencePreview: document.querySelector("#issue-evidence-preview"),
+            issueEvidencePreviewCount: document.querySelector(
+                "#issue-evidence-preview-count",
+            ),
+            issueEvidencePreviewDisclosure: document.querySelector(
+                "#issue-evidence-preview-disclosure",
+            ),
+            issueEvidencePreviewList: document.querySelector(
+                "#issue-evidence-preview-list",
+            ),
+            issueEvidencePreviewAll: document.querySelector(
+                "#issue-evidence-preview-all",
+            ),
+            issueTechnicalDetails: document.querySelector("#issue-technical-details"),
+            issueMetadata: document.querySelector("#issue-metadata"),
+            fingerprintPanel: document.querySelector("#fingerprint-panel"),
+            issueFingerprint: document.querySelector("#issue-fingerprint"),
+            copyIssueFingerprint: document.querySelector("#copy-issue-fingerprint"),
+            recordFixAttempt: document.querySelector("#record-fix-attempt"),
+            fixAttemptsSection: document.querySelector("#fix-attempts-section"),
+            fixEligibilityStatus: document.querySelector("#fix-eligibility-status"),
+            fixMonitoringDetailStatus: document.querySelector(
+                "#fix-monitoring-detail-status",
+            ),
+            fixActionStatus: document.querySelector("#fix-action-status"),
+            fixHistoryList: document.querySelector("#fix-history-list"),
+            fixHistoryLoading: document.querySelector("#fix-history-loading"),
+            fixHistoryEmpty: document.querySelector("#fix-history-empty"),
+            fixEvidenceEvaluated: document.querySelector("#fix-evidence-evaluated"),
+            fixHistoryPagination: document.querySelector("#fix-history-pagination"),
+            fixHistoryPageStatus: document.querySelector("#fix-history-page-status"),
+            fixHistoryLoadMore: document.querySelector("#fix-history-load-more"),
+            occurrenceCount: document.querySelector("#occurrence-count"),
+            occurrenceList: document.querySelector("#occurrence-list"),
+            occurrencesLoading: document.querySelector("#occurrences-loading"),
+            occurrencesPagination: document.querySelector("#occurrences-pagination"),
+            occurrencesPageStatus: document.querySelector("#occurrences-page-status"),
+            occurrencesLoadMore: document.querySelector("#occurrences-load-more"),
+            matchingSection: document.querySelector("#matching-section"),
+            refreshButton: document.querySelector("#refresh-button"),
+            sessionPanel: document.querySelector(".session-panel"),
+            timelinePanel: document.querySelector(".timeline-panel"),
+            sessionCount: document.querySelector("#session-count"),
+            overviewSessionCount: document.querySelector("#overview-session-count"),
+            overviewEventCount: document.querySelector("#overview-event-count"),
+            overviewFindingCount: document.querySelector("#overview-finding-count"),
+            overviewHarnesses: document.querySelector("#overview-harnesses"),
+            overviewFreshness: document.querySelector("#overview-freshness"),
+            sessionSearch: document.querySelector("#session-search"),
+            filterHarness: document.querySelector("#filter-harness"),
+            filterCapture: document.querySelector("#filter-capture"),
+            filterOutcome: document.querySelector("#filter-outcome"),
+            filterDate: document.querySelector("#filter-date"),
+            clearFilters: document.querySelector("#clear-filters"),
+            sessionScopeNote: document.querySelector("#session-scope-note"),
+            sessionList: document.querySelector("#session-list"),
+            sessionsPagination: document.querySelector("#sessions-pagination"),
+            sessionsPageStatus: document.querySelector("#sessions-page-status"),
+            sessionsLoadMore: document.querySelector("#sessions-load-more"),
+            sessionsHeading: document.querySelector("#sessions-heading"),
+            sessionsLoading: document.querySelector("#sessions-loading"),
+            sessionsEmpty: document.querySelector("#sessions-empty"),
+            welcomeState: document.querySelector("#welcome-state"),
+            selectedMeta: document.querySelector("#selected-meta"),
+            sessionTabSummary: document.querySelector("#session-tab-summary"),
+            sessionTabTimeline: document.querySelector("#session-tab-timeline"),
+            sessionTabTimelineCount: document.querySelector(
+                "#session-tab-timeline-count",
+            ),
+            sessionSummaryTab: document.querySelector("#session-summary-tab"),
+            sessionTimelineTab: document.querySelector("#session-timeline-tab"),
+            sessionVisual: document.querySelector("#session-visual"),
+            timelineView: document.querySelector("#timeline-view"),
+            backButton: document.querySelector("#back-button"),
+            selectedAvatar: document.querySelector("#selected-avatar"),
+            selectedHarness: document.querySelector("#selected-harness"),
+            selectedOutcome: document.querySelector("#selected-outcome"),
+            selectedHistorical: document.querySelector("#selected-historical"),
+            selectedSessionID: document.querySelector("#selected-session-id"),
+            copySelectedSession: document.querySelector("#copy-selected-session"),
+            selectedEventCount: document.querySelector("#selected-event-count"),
+            selectedDuration: document.querySelector("#selected-duration"),
+            selectedEndedAt: document.querySelector("#selected-ended-at"),
+            sessionDiagnosis: document.querySelector("#session-diagnosis"),
+            sessionDiagnosisHeading: document.querySelector(
+                "#session-diagnosis-heading",
+            ),
+            sessionDiagnosisStatus: document.querySelector("#session-diagnosis-status"),
+            sessionDiagnosisTitle: document.querySelector("#session-diagnosis-title"),
+            sessionDiagnosisDetail: document.querySelector("#session-diagnosis-detail"),
+            sessionDiagnosisActions: document.querySelector(
+                "#session-diagnosis-actions",
+            ),
+            sessionDiagnosisLimitations: document.querySelector(
+                "#session-diagnosis-limitations",
+            ),
+            overviewState: document.querySelector("#overview-state"),
+            overviewQuality: document.querySelector("#overview-quality"),
+            activityGrid: document.querySelector("#activity-grid"),
+            needsAttentionSummary: document.querySelector("#needs-attention-summary"),
+            observedWorkSummary: document.querySelector("#observed-work-summary"),
+            sessionHighlights: document.querySelector("#session-highlights"),
+            resourceList: document.querySelector("#resource-list"),
+            resourceDisclosure: document.querySelector("#resource-disclosure"),
+            findingList: document.querySelector("#finding-list"),
+            findingsPagination: document.querySelector("#findings-pagination"),
+            findingsPageStatus: document.querySelector("#findings-page-status"),
+            findingsLoadMore: document.querySelector("#findings-load-more"),
+            timelineFreshness: document.querySelector("#timeline-freshness"),
+            timelineScope: document.querySelector("#timeline-scope"),
+            allEventsToggle: document.querySelector("#all-events-toggle"),
+            eventList: document.querySelector("#event-list"),
+            eventsPagination: document.querySelector("#events-pagination"),
+            eventsPageStatus: document.querySelector("#events-page-status"),
+            eventsLoadMore: document.querySelector("#events-load-more"),
+            timelineLoading: document.querySelector("#timeline-loading"),
+            eventsEmpty: document.querySelector("#events-empty"),
+            errorBanner: document.querySelector("#error-banner"),
+            errorTitle: document.querySelector("#error-title"),
+            errorDetail: document.querySelector("#error-detail"),
+            errorRetry: document.querySelector("#error-retry"),
+            fixAttemptModalLayer: document.querySelector("#fix-attempt-modal-layer"),
+            fixAttemptDialog: document.querySelector("#fix-attempt-dialog"),
+            fixAttemptClose: document.querySelector("#fix-attempt-close"),
+            fixAttemptCancel: document.querySelector("#fix-attempt-cancel"),
+            fixAttemptConfirm: document.querySelector("#fix-attempt-confirm"),
+            fixAttemptAlert: document.querySelector("#fix-attempt-alert"),
+            fixCategoryFieldset: document.querySelector("#fix-category-fieldset"),
+            fixCategoryOptions: document.querySelector("#fix-category-options"),
+            fixDraftRecovery: document.querySelector("#fix-draft-recovery"),
+            abandonFixDraft: document.querySelector("#abandon-fix-draft"),
+            fixRetractionModalLayer: document.querySelector(
+                "#fix-retraction-modal-layer",
+            ),
+            fixRetractionDialog: document.querySelector("#fix-retraction-dialog"),
+            fixRetractionClose: document.querySelector("#fix-retraction-close"),
+            fixRetractionCancel: document.querySelector("#fix-retraction-cancel"),
+            fixRetractionConfirm: document.querySelector("#fix-retraction-confirm"),
+            fixRetractionAlert: document.querySelector("#fix-retraction-alert"),
+            fixRetractionFieldset: document.querySelector("#fix-retraction-fieldset"),
+            fixRetractionOptions: document.querySelector("#fix-retraction-options"),
+            fixRetractionRecovery: document.querySelector("#fix-retraction-recovery"),
+            abandonFixRetraction: document.querySelector("#abandon-fix-retraction"),
+        };
 
-  const focusRegistry = {
-    briefActions: new Map(),
-    missionPackTriggers: new Map(),
-    reportEvidenceTriggers: new Map(),
-    briefSessions: new Map(),
-    diagnosisActions: new Map(),
-    monitoringCards: new Map(),
-    issueCards: new Map(),
-    familyCards: new Map(),
-    familyMembers: new Map(),
-    occurrenceActions: new Map(),
-    sessionCards: new Map(),
-    fixTriggers: new Map(),
-    fixHistoryRows: new Map(),
-    fixRetractionTriggers: new Map(),
-    fixObservationRows: new Map(),
-  };
-  const fixDrafts = new Map();
-  const fixRetractionDrafts = new Map();
-  const fixObservationPages = new Map();
-  const missionPackCacheByID = new Map();
-  const missionPackIDByIssue = new Map();
-  let searchTimer = 0;
-  let issueFilterTimer = 0;
-  const mobileQuery = globalThis.matchMedia("(max-width: 680px)");
-  const runtimeReady = loadRuntimeExperience();
-  prepareValueFirstAttentionLayout();
-  renderFixDialogChoices();
-  renderFixMonitoringFilters();
-  bindEvents();
-  setActiveView("brief", false);
-  void startProgressiveInitialization();
+        const focusRegistry = {
+            briefActions: new Map(),
+            missionPackTriggers: new Map(),
+            reportEvidenceTriggers: new Map(),
+            briefSessions: new Map(),
+            diagnosisActions: new Map(),
+            monitoringCards: new Map(),
+            issueCards: new Map(),
+            familyCards: new Map(),
+            familyMembers: new Map(),
+            occurrenceActions: new Map(),
+            sessionCards: new Map(),
+            fixTriggers: new Map(),
+            fixHistoryRows: new Map(),
+            fixRetractionTriggers: new Map(),
+            fixObservationRows: new Map(),
+        };
+        const fixDrafts = new Map();
+        const fixRetractionDrafts = new Map();
+        const fixObservationPages = new Map();
+        const missionPackCacheByID = new Map();
+        const missionPackIDByIssue = new Map();
+        let searchTimer = 0;
+        let issueFilterTimer = 0;
+        const mobileQuery = globalThis.matchMedia("(max-width: 680px)");
+        const runtimeReady = loadRuntimeExperience();
+        prepareValueFirstAttentionLayout();
+        renderFixDialogChoices();
+        renderFixMonitoringFilters();
+        bindEvents();
+        setActiveView("brief", false);
+        void startProgressiveInitialization();
 
-  function createIssueBucket(kind) {
-    return {
-      kind,
-      data: [],
-      nextCursor: "",
-      hasMore: false,
-      viewCursor: "",
-      analysis: null,
-      selection: null,
-      status: "idle",
-      error: null,
-      requestGeneration: 0,
-    };
-  }
+        function createIssueBucket(kind) {
+            return {
+                kind,
+                data: [],
+                nextCursor: "",
+                hasMore: false,
+                viewCursor: "",
+                analysis: null,
+                selection: null,
+                status: "idle",
+                error: null,
+                requestGeneration: 0,
+            };
+        }
 
-  function createAttentionFamilyBucket() {
-    return {
-      kind: "family",
-      data: [],
-      nextCursor: "",
-      hasMore: false,
-      analysis: null,
-      selection: null,
-      status: "idle",
-      error: null,
-      requestGeneration: 0,
-    };
-  }
+        function createAttentionFamilyBucket() {
+            return {
+                kind: "family",
+                data: [],
+                nextCursor: "",
+                hasMore: false,
+                analysis: null,
+                selection: null,
+                status: "idle",
+                error: null,
+                requestGeneration: 0,
+            };
+        }
 
-  function createFixMonitoringBucket() {
-    return {
-      data: [],
-      nextCursor: "",
-      hasMore: false,
-      viewCursor: "",
-      evidenceEvaluatedAt: "",
-      status: "idle",
-      error: null,
-      requestGeneration: 0,
-    };
-  }
+        function createFixMonitoringBucket() {
+            return {
+                data: [],
+                nextCursor: "",
+                hasMore: false,
+                viewCursor: "",
+                evidenceEvaluatedAt: "",
+                status: "idle",
+                error: null,
+                requestGeneration: 0,
+            };
+        }
 
-  function createIssueEvidencePreview() {
-    return {
-      issueID: "",
-      occurrenceID: "",
-      sessionID: "",
-      status: "idle",
-      events: [],
-      requestedCount: 0,
-      foundCount: 0,
-      missingCount: 0,
-      missingEventIDs: [],
-      availableEventIDs: [],
-      expanded: false,
-      error: "",
-    };
-  }
+        function createIssueEvidencePreview() {
+            return {
+                issueID: "",
+                occurrenceID: "",
+                sessionID: "",
+                status: "idle",
+                events: [],
+                requestedCount: 0,
+                foundCount: 0,
+                missingCount: 0,
+                missingEventIDs: [],
+                availableEventIDs: [],
+                expanded: false,
+                error: "",
+            };
+        }
 
-  async function startProgressiveInitialization() {
-    await runtimeReady;
-    void loadUpdateStatus();
-    await requestInitializationStatus();
-    await refreshActiveViewForInitialization(false);
-    scheduleInitializationPoll();
-    void startTranscriptPolling();
-  }
+        async function startProgressiveInitialization() {
+            await runtimeReady;
+            void loadUpdateStatus();
+            await requestInitializationStatus();
+            await refreshActiveViewForInitialization(false);
+            scheduleInitializationPoll();
+            void startTranscriptPolling();
+        }
 
-  async function startTranscriptPolling() {
-    await requestTranscriptStatus();
-    scheduleTranscriptPoll();
-  }
+        async function startTranscriptPolling() {
+            await requestTranscriptStatus();
+            scheduleTranscriptPoll();
+        }
 
-  async function loadRuntimeExperience() {
-    let experience = "current";
-    try {
-      const response = await apiGet("/v1/runtime");
-      experience = requireRuntimeExperience(response);
-    } catch {
-      experience = "current";
-    }
-    applyExperience(experience);
-    return experience;
-  }
+        async function loadRuntimeExperience() {
+            let experience = "current";
+            try {
+                const response = await apiGet("/v1/runtime");
+                experience = requireRuntimeExperience(response);
+            } catch {
+                experience = "current";
+            }
+            applyExperience(experience);
+            return experience;
+        }
 
-  function requireRuntimeExperience(response) {
-    const experience = readText(response && response.experience);
-    if (
-      !isRecord(response) ||
-      readText(response.schema_version) !== runtimeSchemaVersion ||
-      !["current", "value-first"].includes(experience)
-    ) {
-      throw new Error("Local API returned an invalid runtime experience.");
-    }
-    return experience;
-  }
+        function requireRuntimeExperience(response) {
+            const experience = readText(response && response.experience);
+            if (!isRecord(response) ||
+                readText(response.schema_version) !== runtimeSchemaVersion ||
+                !["current", "value-first"].includes(experience)
+            ) {
+                throw new Error("Local API returned an invalid runtime experience.");
+            }
+            return experience;
+        }
 
-  function applyExperience(experience) {
-    const selected = experience === "value-first" ? experience : "current";
-    const copy = experienceCopy[selected];
-    state.experience = selected;
-    document.body.dataset.experience = selected;
-    elements.appShell.dataset.experience = selected;
-    elements.navBriefLabel.textContent = copy.navBrief;
-    elements.navAttentionLabel.textContent = copy.navAttention;
-    elements.navSessionsLabel.textContent = copy.navSessions;
-    elements.navHabitsLabel.textContent = copy.navHabits;
-    elements.briefEyebrow.textContent = copy.briefEyebrow;
-    elements.briefLoadingText.textContent = copy.briefLoading;
-    elements.briefErrorTitle.textContent = copy.briefErrorTitle;
-    elements.briefErrorDetail.textContent = copy.briefErrorDetail;
-    elements.briefOpenAttention.textContent = copy.briefOpenAttention;
-    elements.briefOpenSessions.textContent = copy.briefOpenSessions;
-    elements.briefRecentEmptyDetail.textContent = copy.briefRecentEmptyDetail;
-    elements.attentionListPane.setAttribute(
-      "aria-label",
-      copy.attentionAriaLabel,
-    );
-    elements.attentionEyebrow.textContent = copy.attentionEyebrow;
-    elements.attentionHeading.textContent = copy.attentionHeading;
-    elements.attentionStatusLabel.textContent = copy.attentionStatus;
-    elements.familyBackButton.setAttribute(
-      "aria-label",
-      copy.attentionBackLabel,
-    );
-    elements.issueBackButton.setAttribute(
-      "aria-label",
-      copy.attentionBackLabel,
-    );
-    elements.familyMembersEmptyDetail.textContent =
-      copy.attentionEmptyDetail;
-    elements.sessionsHeading.textContent = copy.sessionsHeading;
-    const filterSummary = document.querySelector(
-      "#attention-filter-disclosure > summary",
-    );
-    if (filterSummary) {
-      filterSummary.textContent = copy.attentionFilterSummary;
-    }
-  }
+        function applyExperience(experience) {
+            const selected = experience === "value-first" ? experience : "current";
+            const copy = experienceCopy[selected];
+            state.experience = selected;
+            document.body.dataset.experience = selected;
+            elements.appShell.dataset.experience = selected;
+            elements.navBriefLabel.textContent = copy.navBrief;
+            elements.navAttentionLabel.textContent = copy.navAttention;
+            elements.navSessionsLabel.textContent = copy.navSessions;
+            elements.navHabitsLabel.textContent = copy.navHabits;
+            elements.briefEyebrow.textContent = copy.briefEyebrow;
+            elements.briefLoadingText.textContent = copy.briefLoading;
+            elements.briefErrorTitle.textContent = copy.briefErrorTitle;
+            elements.briefErrorDetail.textContent = copy.briefErrorDetail;
+            elements.briefOpenAttention.textContent = copy.briefOpenAttention;
+            elements.briefOpenSessions.textContent = copy.briefOpenSessions;
+            elements.briefRecentEmptyDetail.textContent = copy.briefRecentEmptyDetail;
+            elements.attentionListPane.setAttribute(
+                "aria-label",
+                copy.attentionAriaLabel,
+            );
+            elements.attentionEyebrow.textContent = copy.attentionEyebrow;
+            elements.attentionHeading.textContent = copy.attentionHeading;
+            elements.attentionStatusLabel.textContent = copy.attentionStatus;
+            elements.familyBackButton.setAttribute(
+                "aria-label",
+                copy.attentionBackLabel,
+            );
+            elements.issueBackButton.setAttribute(
+                "aria-label",
+                copy.attentionBackLabel,
+            );
+            elements.familyMembersEmptyDetail.textContent = copy.attentionEmptyDetail;
+            elements.sessionsHeading.textContent = copy.sessionsHeading;
+            const filterSummary = document.querySelector(
+                "#attention-filter-disclosure > summary",
+            );
+            if (filterSummary) {
+                filterSummary.textContent = copy.attentionFilterSummary;
+            }
+        }
 
-  // Only pass fixed, locally authored UI copy here. This rewrites nav terms
-  // unconditionally, so event-, catalog-, API-error-, and provider-derived text
-  // must render verbatim and never flow through this function.
-  function experiencePageText(value) {
-    const text = readText(value);
-    if (state.experience !== "value-first") return text;
-    return text
-      .replaceAll("Developer Brief", "Home")
-      .replaceAll("Brief", "Home")
-      .replaceAll("The brief", "Home")
-      .replaceAll("the brief", "Home")
-      .replaceAll("local brief", "Home")
-      .replaceAll("Attention", "Review")
-      .replaceAll("Sessions", "History");
-  }
+        // Only pass fixed, locally authored UI copy here. This rewrites nav terms
+        // unconditionally, so event-, catalog-, API-error-, and provider-derived text
+        // must render verbatim and never flow through this function.
+        function experiencePageText(value) {
+            const text = readText(value);
+            if (state.experience !== "value-first") return text;
+            return text
+                .replaceAll("Developer Brief", "Home")
+                .replaceAll("Brief", "Home")
+                .replaceAll("The brief", "Home")
+                .replaceAll("the brief", "Home")
+                .replaceAll("local brief", "Home")
+                .replaceAll("Attention", "Review")
+                .replaceAll("Sessions", "History");
+        }
 
-  async function requestInitializationStatus() {
-    if (state.initializationRequestInFlight) {
-      return { ok: false, skipped: true };
-    }
-    state.initializationRequestInFlight = true;
-    const generation = ++state.initializationPollGeneration;
-    const previous = readText(state.initialization && state.initialization.state);
-    try {
-      const response = await apiGet("/v1/initialization");
-      if (generation !== state.initializationPollGeneration) {
-        return { ok: false, stale: true, previous, current: previous };
-      }
-      const initialization = requireInitializationStatus(response);
-      state.initialization = initialization;
-      renderInitializationStatus();
-      return {
-        ok: true,
-        previous,
-        current: initialization.state,
-      };
-    } catch {
-      if (generation !== state.initializationPollGeneration) {
-        return { ok: false, stale: true, previous, current: previous };
-      }
-      renderInitializationStatus();
-      return { ok: false, previous, current: previous };
-    } finally {
-      state.initializationRequestInFlight = false;
-    }
-  }
+        async function requestInitializationStatus() {
+            if (state.initializationRequestInFlight) {
+                return { ok: false, skipped: true };
+            }
+            state.initializationRequestInFlight = true;
+            const generation = ++state.initializationPollGeneration;
+            const previous = readText(
+                state.initialization && state.initialization.state,
+            );
+            try {
+                const response = await apiGet("/v1/initialization");
+                if (generation !== state.initializationPollGeneration) {
+                    return { ok: false, stale: true, previous, current: previous };
+                }
+                const initialization = requireInitializationStatus(response);
+                state.initialization = initialization;
+                renderInitializationStatus();
+                return {
+                    ok: true,
+                    previous,
+                    current: initialization.state,
+                };
+            } catch {
+                if (generation !== state.initializationPollGeneration) {
+                    return { ok: false, stale: true, previous, current: previous };
+                }
+                renderInitializationStatus();
+                return { ok: false, previous, current: previous };
+            } finally {
+                state.initializationRequestInFlight = false;
+            }
+        }
 
-  async function requestTranscriptStatus() {
-    if (state.transcriptRequestInFlight) return false;
-    state.transcriptRequestInFlight = true;
-    const generation = ++state.transcriptPollGeneration;
-    try {
-      const response = await apiGet("/v1/transcript-status");
-      if (generation !== state.transcriptPollGeneration) return false;
-      state.transcriptStatus = requireTranscriptStatus(response);
-      state.transcriptStatusStale = false;
-      renderTranscriptStatus();
-      return true;
-    } catch {
-      if (generation !== state.transcriptPollGeneration) return false;
-      state.transcriptStatusStale = true;
-      renderTranscriptStatus();
-      return false;
-    } finally {
-      state.transcriptRequestInFlight = false;
-    }
-  }
+        async function requestTranscriptStatus() {
+            if (state.transcriptRequestInFlight) return false;
+            state.transcriptRequestInFlight = true;
+            const generation = ++state.transcriptPollGeneration;
+            try {
+                const response = await apiGet("/v1/transcript-status");
+                if (generation !== state.transcriptPollGeneration) return false;
+                state.transcriptStatus = requireTranscriptStatus(response);
+                state.transcriptStatusStale = false;
+                renderTranscriptStatus();
+                return true;
+            } catch {
+                if (generation !== state.transcriptPollGeneration) return false;
+                state.transcriptStatusStale = true;
+                renderTranscriptStatus();
+                return false;
+            } finally {
+                state.transcriptRequestInFlight = false;
+            }
+        }
 
-  function requireTranscriptStatus(response) {
-    const coverage = isRecord(response) ? response.coverage : null;
-    const sessions = isRecord(response) && Array.isArray(response.sessions)
-      ? response.sessions
-      : null;
-    if (
-      !isRecord(response) ||
-      readText(response.schema_version) !== "belay.transcript-status.v1" ||
-      !isRecord(coverage) ||
-      sessions === null ||
-      sessions.length > 10
-    ) {
-      throw new Error("Local API returned an invalid transcript status.");
-    }
-    const counts = {
-      with_transcript: toOptionalCount(coverage.with_transcript),
-      partial: toOptionalCount(coverage.partial),
-      without_transcript: toOptionalCount(coverage.without_transcript),
-      transcript_only: toOptionalCount(coverage.transcript_only),
-    };
-    if (Object.values(counts).some((value) => value === null)) {
-      throw new Error("Local API returned invalid transcript coverage.");
-    }
-    return {
-      coverage: counts,
-      sessions: sessions.map((session) => ({
-        session_key: readText(session && session.session_key),
-        agent: readText(session && session.agent),
-        project: readText(session && session.project),
-        last_activity_at: readText(session && session.last_activity_at),
-        coverage: readText(session && session.coverage),
-        turn_count: toOptionalCount(session && session.turn_count),
-        active: session && session.active === true,
-      })),
-    };
-  }
+        function requireTranscriptStatus(response) {
+            const coverage = isRecord(response) ? response.coverage : null;
+            const sessions =
+                isRecord(response) && Array.isArray(response.sessions) ?
+                response.sessions :
+                null;
+            if (!isRecord(response) ||
+                readText(response.schema_version) !== "belay.transcript-status.v1" ||
+                !isRecord(coverage) ||
+                sessions === null ||
+                sessions.length > 10
+            ) {
+                throw new Error("Local API returned an invalid transcript status.");
+            }
+            const counts = {
+                with_transcript: toOptionalCount(coverage.with_transcript),
+                partial: toOptionalCount(coverage.partial),
+                without_transcript: toOptionalCount(coverage.without_transcript),
+                transcript_only: toOptionalCount(coverage.transcript_only),
+            };
+            if (Object.values(counts).some((value) => value === null)) {
+                throw new Error("Local API returned invalid transcript coverage.");
+            }
+            return {
+                coverage: counts,
+                sessions: sessions.map((session) => ({
+                    session_key: readText(session && session.session_key),
+                    agent: readText(session && session.agent),
+                    project: readText(session && session.project),
+                    last_activity_at: readText(session && session.last_activity_at),
+                    coverage: readText(session && session.coverage),
+                    turn_count: toOptionalCount(session && session.turn_count),
+                    active: session && session.active === true,
+                })),
+            };
+        }
 
-  function renderTranscriptStatus() {
-    const status = state.transcriptStatus;
-    if (!status) {
-      elements.transcriptRefreshStatus.textContent =
-        "Transcript status unavailable · retrying every 2 seconds";
-      elements.transcriptRefreshStatus.dataset.state = "unavailable";
-      return;
-    }
-    const coverage = status.coverage;
-    elements.transcriptWithCount.textContent = formatNumber(
-      coverage.with_transcript,
-    );
-    elements.transcriptPartialCount.textContent = formatNumber(
-      coverage.partial,
-    );
-    elements.transcriptWithoutCount.textContent = formatNumber(
-      coverage.without_transcript,
-    );
-    elements.transcriptOnlyCount.textContent = formatNumber(
-      coverage.transcript_only,
-    );
-    elements.transcriptRefreshStatus.textContent = state.transcriptStatusStale
-      ? "Last transcript status is stale · retrying every 2 seconds"
-      : "Updates every 2 seconds";
-    elements.transcriptRefreshStatus.dataset.state =
-      state.transcriptStatusStale ? "stale" : "current";
-    elements.transcriptSessionList.replaceChildren();
-    status.sessions.forEach((session) => {
-      const row = document.createElement("div");
-      row.className = "transcript-session-row";
-      row.dataset.active = session.active ? "true" : "false";
-      const project = document.createElement("strong");
-      project.textContent =
-        session.project ||
-        displayHarness(session.agent) ||
-        "Local agent session";
-      const detail = document.createElement("span");
-      const activity = formatRelativeTime(session.last_activity_at);
-      const turns = session.turn_count === null
-        ? "turn count unavailable"
-        : `${formatNumber(session.turn_count)} ${
-            session.turn_count === 1 ? "turn" : "turns"
-          }`;
-      detail.textContent = `${
+        function renderTranscriptStatus() {
+            const status = state.transcriptStatus;
+            if (!status) {
+                elements.transcriptRefreshStatus.textContent =
+                    "Transcript status unavailable · retrying every 2 seconds";
+                elements.transcriptRefreshStatus.dataset.state = "unavailable";
+                return;
+            }
+            const coverage = status.coverage;
+            elements.transcriptWithCount.textContent = formatNumber(
+                coverage.with_transcript,
+            );
+            elements.transcriptPartialCount.textContent = formatNumber(
+                coverage.partial,
+            );
+            elements.transcriptWithoutCount.textContent = formatNumber(
+                coverage.without_transcript,
+            );
+            elements.transcriptOnlyCount.textContent = formatNumber(
+                coverage.transcript_only,
+            );
+            elements.transcriptRefreshStatus.textContent = state.transcriptStatusStale ?
+                "Last transcript status is stale · retrying every 2 seconds" :
+                "Updates every 2 seconds";
+            elements.transcriptRefreshStatus.dataset.state = state.transcriptStatusStale ?
+                "stale" :
+                "current";
+            elements.transcriptSessionList.replaceChildren();
+            status.sessions.forEach((session) => {
+                const row = document.createElement("div");
+                row.className = "transcript-session-row";
+                row.dataset.active = session.active ? "true" : "false";
+                const project = document.createElement("strong");
+                project.textContent =
+                    session.project ||
+                    displayHarness(session.agent) ||
+                    "Local agent session";
+                const detail = document.createElement("span");
+                const activity = formatRelativeTime(session.last_activity_at);
+                const turns =
+                    session.turn_count === null ?
+                    "turn count unavailable" :
+                    `${formatNumber(session.turn_count)} ${
+              session.turn_count === 1 ? "turn" : "turns"
+            }`;
+                detail.textContent = `${
         session.active ? "Live" : readableLabel(session.coverage, "Recent")
       } · ${turns} · ${activity}`;
-      row.append(project, detail);
-      elements.transcriptSessionList.append(row);
-    });
-    elements.transcriptEmpty.hidden = status.sessions.length !== 0;
-  }
+                row.append(project, detail);
+                elements.transcriptSessionList.append(row);
+            });
+            elements.transcriptEmpty.hidden = status.sessions.length !== 0;
+        }
 
-  function scheduleTranscriptPoll() {
-    if (state.transcriptRequestInFlight || state.transcriptPollTimer) return;
-    state.transcriptPollTimer = globalThis.setTimeout(() => {
-      state.transcriptPollTimer = 0;
-      void pollTranscriptStatus();
-    }, transcriptPollMilliseconds);
-  }
+        function scheduleTranscriptPoll() {
+            if (state.transcriptRequestInFlight || state.transcriptPollTimer) return;
+            state.transcriptPollTimer = globalThis.setTimeout(() => {
+                state.transcriptPollTimer = 0;
+                void pollTranscriptStatus();
+            }, transcriptPollMilliseconds);
+        }
 
-  async function pollTranscriptStatus() {
-    await requestTranscriptStatus();
-    scheduleTranscriptPoll();
-  }
+        async function pollTranscriptStatus() {
+            await requestTranscriptStatus();
+            scheduleTranscriptPoll();
+        }
 
-  function requireInitializationStatus(response) {
-    const value = isRecord(response) ? response.initialization : null;
-    const initializationState = readText(value && value.state);
-    if (
-      !isRecord(response) ||
-      readText(response.schema_version) !== "belay.initialization.v1" ||
-      !isRecord(value) ||
-      !["initializing", "ready", "degraded"].includes(initializationState)
-    ) {
-      throw new Error("Local API returned an invalid initialization status.");
-    }
-    return {
-      schema_version: "belay.initialization.v1",
-      state: initializationState,
-      started_at: readText(value.started_at),
-      completed_at: readText(value.completed_at),
-      error_code: readText(value.error_code),
-    };
-  }
+        function requireInitializationStatus(response) {
+            const value = isRecord(response) ? response.initialization : null;
+            const initializationState = readText(value && value.state);
+            if (!isRecord(response) ||
+                readText(response.schema_version) !== "belay.initialization.v1" ||
+                !isRecord(value) ||
+                !["initializing", "ready", "degraded"].includes(initializationState)
+            ) {
+                throw new Error("Local API returned an invalid initialization status.");
+            }
+            return {
+                schema_version: "belay.initialization.v1",
+                state: initializationState,
+                started_at: readText(value.started_at),
+                completed_at: readText(value.completed_at),
+                error_code: readText(value.error_code),
+            };
+        }
 
-  function renderInitializationStatus() {
-    const initializationState = readText(
-      state.initialization && state.initialization.state,
-    );
-    let message = "";
-    if (initializationState === "initializing") {
-      message =
-        "Belay is importing local agent history. Results are partial and will update automatically.";
-    } else if (initializationState === "degraded") {
-      message =
-        "Belay imported available data, but part of the initial scan could not complete. Results may be partial.";
-    }
-    elements.initializationBanner.hidden = !message;
-    elements.initializationBanner.dataset.state = initializationState;
-    elements.initializationBanner.textContent = message;
-  }
+        function renderInitializationStatus() {
+            const initializationState = readText(
+                state.initialization && state.initialization.state,
+            );
+            let message = "";
+            if (initializationState === "initializing") {
+                message =
+                    "Belay is importing local agent history. Results are partial and will update automatically.";
+            } else if (initializationState === "degraded") {
+                message =
+                    "Belay imported available data, but part of the initial scan could not complete. Results may be partial.";
+            }
+            elements.initializationBanner.hidden = !message;
+            elements.initializationBanner.dataset.state = initializationState;
+            elements.initializationBanner.textContent = message;
+        }
 
-  function scheduleInitializationPoll() {
-    if (
-      readText(state.initialization && state.initialization.state) !==
-        "initializing" ||
-      state.initializationRequestInFlight ||
-      state.initializationPollTimer
-    ) {
-      return;
-    }
-    state.initializationPollTimer = globalThis.setTimeout(() => {
-      state.initializationPollTimer = 0;
-      void pollInitialization();
-    }, initializationPollMilliseconds);
-  }
+        function scheduleInitializationPoll() {
+            if (
+                readText(state.initialization && state.initialization.state) !==
+                "initializing" ||
+                state.initializationRequestInFlight ||
+                state.initializationPollTimer
+            ) {
+                return;
+            }
+            state.initializationPollTimer = globalThis.setTimeout(() => {
+                state.initializationPollTimer = 0;
+                void pollInitialization();
+            }, initializationPollMilliseconds);
+        }
 
-  function stopInitializationPolling() {
-    globalThis.clearTimeout(state.initializationPollTimer);
-    state.initializationPollTimer = 0;
-  }
+        function stopInitializationPolling() {
+            globalThis.clearTimeout(state.initializationPollTimer);
+            state.initializationPollTimer = 0;
+        }
 
-  async function pollInitialization() {
-    if (state.initializationRequestInFlight) return;
-    const result = await requestInitializationStatus();
-    const transitionedToTerminal =
-      result.ok &&
-      result.previous === "initializing" &&
-      ["ready", "degraded"].includes(result.current);
-    if (
-      result.ok &&
-      (result.current === "initializing" || transitionedToTerminal)
-    ) {
-      await refreshActiveViewForInitialization(true);
-    }
-    if (
-      readText(state.initialization && state.initialization.state) ===
-      "initializing"
-    ) {
-      scheduleInitializationPoll();
-    } else {
-      stopInitializationPolling();
-    }
-  }
+        async function pollInitialization() {
+            if (state.initializationRequestInFlight) return;
+            const result = await requestInitializationStatus();
+            const transitionedToTerminal =
+                result.ok &&
+                result.previous === "initializing" && ["ready", "degraded"].includes(result.current);
+            if (
+                result.ok &&
+                (result.current === "initializing" || transitionedToTerminal)
+            ) {
+                await refreshActiveViewForInitialization(true);
+            }
+            if (
+                readText(state.initialization && state.initialization.state) ===
+                "initializing"
+            ) {
+                scheduleInitializationPoll();
+            } else {
+                stopInitializationPolling();
+            }
+        }
 
-  async function refreshActiveViewForInitialization(preserveSelection) {
-    if (state.activeView === "brief") {
-      await loadDeveloperBrief(preserveSelection);
-      return true;
-    }
-    if (state.activeView === "attention") {
-      if (state.selectedFamily || state.selectedIssueID) return false;
-      await refreshAttention(false, true);
-      return true;
-    }
-    if (state.selectedSessionID) return false;
-    await refreshSessions(false);
-    return true;
-  }
+        async function refreshActiveViewForInitialization(preserveSelection) {
+            if (state.activeView === "brief") {
+                await loadDeveloperBrief(preserveSelection);
+                return true;
+            }
+            if (state.activeView === "attention") {
+                if (state.selectedFamily || state.selectedIssueID) return false;
+                await refreshAttention(false, true);
+                return true;
+            }
+            if (state.selectedSessionID) return false;
+            await refreshSessions(false);
+            return true;
+        }
 
-  async function loadDeveloperBrief(preserveCurrent = false) {
-    clearMissionPackCache();
-    void loadReportHabits();
-    const generation = ++state.briefRequestGeneration;
-    const priorBrief = state.developerBrief;
-    const priorStatus = state.briefStatus;
-    const priorError = state.briefError;
-    if (!preserveCurrent) {
-      state.briefStatus = "loading";
-      state.briefError = "";
-      state.developerBrief = null;
-      renderDeveloperBrief();
-    }
-    try {
-      const response = await apiGet("/v1/report");
-      if (generation !== state.briefRequestGeneration) return false;
-      state.developerBrief = requireDeveloperBrief(response);
-      state.briefStatus = "ready";
-      renderDeveloperBrief();
-      return true;
-    } catch (error) {
-      if (generation !== state.briefRequestGeneration) return false;
-      if (preserveCurrent && priorBrief) {
-        state.developerBrief = priorBrief;
-        state.briefStatus = priorStatus;
-        state.briefError = priorError;
-        renderDeveloperBrief();
-        return false;
-      }
-      state.developerBrief = null;
-      state.briefStatus = "error";
-      state.briefError = customerErrorMessage(
-        error,
-        experienceCopy[state.experience].briefErrorDetail,
-      );
-      renderDeveloperBrief();
-      return false;
-    }
-  }
+        async function loadDeveloperBrief(preserveCurrent = false) {
+            clearMissionPackCache();
+            void loadReportHabits();
+            const generation = ++state.briefRequestGeneration;
+            const priorBrief = state.developerBrief;
+            const priorStatus = state.briefStatus;
+            const priorError = state.briefError;
+            if (!preserveCurrent) {
+                state.briefStatus = "loading";
+                state.briefError = "";
+                state.developerBrief = null;
+                renderDeveloperBrief();
+            }
+            try {
+                const response = await apiGet("/v1/report");
+                if (generation !== state.briefRequestGeneration) return false;
+                state.developerBrief = requireDeveloperBrief(response);
+                state.briefStatus = "ready";
+                renderDeveloperBrief();
+                return true;
+            } catch (error) {
+                if (generation !== state.briefRequestGeneration) return false;
+                if (preserveCurrent && priorBrief) {
+                    state.developerBrief = priorBrief;
+                    state.briefStatus = priorStatus;
+                    state.briefError = priorError;
+                    renderDeveloperBrief();
+                    return false;
+                }
+                state.developerBrief = null;
+                state.briefStatus = "error";
+                state.briefError = customerErrorMessage(
+                    error,
+                    experienceCopy[state.experience].briefErrorDetail,
+                );
+                renderDeveloperBrief();
+                return false;
+            }
+        }
 
-  function requireDeveloperBrief(response) {
-    const brief = isRecord(response && response.data)
-      ? response.data
-      : response;
-    if (
-      !isRecord(brief) ||
-      readText(brief.projection_version) !== "belay.report.v1" ||
-      !isRecord(brief.totals) ||
-      !Array.isArray(brief.weeks) ||
-      !Array.isArray(brief.top_issues) ||
-      !Array.isArray(brief.fixes) ||
-      !isRecord(brief.waste) ||
-      !isRecord(brief.about) ||
-      !Array.isArray(brief.about.notes)
-    ) {
-      throw new Error("Local API returned an invalid report.");
-    }
-    brief.top_issues = brief.top_issues.slice(0, 5).map(requireCostIssue);
-    return brief;
-  }
+        function requireDeveloperBrief(response) {
+            const brief = isRecord(response && response.data) ?
+                response.data :
+                response;
+            if (!isRecord(brief) ||
+                readText(brief.projection_version) !== "belay.report.v1" ||
+                !isRecord(brief.totals) ||
+                !Array.isArray(brief.weeks) ||
+                !Array.isArray(brief.top_issues) ||
+                !Array.isArray(brief.fixes) ||
+                !isRecord(brief.waste) ||
+                !isRecord(brief.about) ||
+                !Array.isArray(brief.about.notes)
+            ) {
+                throw new Error("Local API returned an invalid report.");
+            }
+            brief.top_issues = brief.top_issues.slice(0, 5).map(requireCostIssue);
+            return brief;
+        }
 
-  function renderDeveloperBrief() {
-    const loading = state.briefStatus === "loading";
-    const failed = state.briefStatus === "error";
-    const brief = state.developerBrief;
-    elements.briefLoading.hidden = !loading;
-    elements.briefError.hidden = !failed;
-    elements.briefContent.hidden = !brief || loading || failed;
-    elements.briefErrorDetail.textContent =
-      state.briefError || experienceCopy[state.experience].briefErrorDetail;
-    if (!brief) {
-      if (loading) {
-        elements.briefWindow.textContent =
-          "Loading the latest recorded activity…";
-        elements.briefStatus.textContent = "";
-      }
-      elements.reportSparkline.replaceChildren();
-      elements.reportSparkline.hidden = true;
-      renderBriefSummary(null);
-      return;
-    }
-    const harnesses = Array.isArray(brief.totals.harnesses)
-      ? brief.totals.harnesses.map(displayHarness).filter(Boolean)
-      : [];
-    const sessionCount = toFiniteNumber(brief.totals.sessions);
-    elements.briefHeading.textContent =
-      sessionCount === 0
-        ? "Waiting for your first session"
-        : "Your recent sessions at a glance";
-    const harnessCopy = harnesses.length
-      ? ` from ${harnesses.join(" and ")}`
-      : "";
-    elements.briefWindow.textContent =
-      `Across ${formatNumber(sessionCount)} retained ${sessionCount === 1 ? "session" : "sessions"}${harnessCopy}`;
-    elements.briefStatus.textContent = initializationInProgress()
-      ? "Importing earlier sessions…"
-      : `Updated ${formatRelativeTime(brief.generated_at) || "just now"}`;
-    renderReportTotals(brief);
-    renderReportIssues(brief.top_issues);
-    renderReportFixes(brief.fixes);
-    renderReportWaste(brief.waste);
-    renderReportAbout(brief.about);
-  }
+        function renderDeveloperBrief() {
+            const loading = state.briefStatus === "loading";
+            const failed = state.briefStatus === "error";
+            const brief = state.developerBrief;
+            elements.briefLoading.hidden = !loading;
+            elements.briefError.hidden = !failed;
+            elements.briefContent.hidden = !brief || loading || failed;
+            elements.briefErrorDetail.textContent =
+                state.briefError || experienceCopy[state.experience].briefErrorDetail;
+            if (!brief) {
+                if (loading) {
+                    elements.briefWindow.textContent =
+                        "Loading the latest recorded activity…";
+                    elements.briefStatus.textContent = "";
+                }
+                elements.reportSparkline.replaceChildren();
+                elements.reportSparkline.hidden = true;
+                renderBriefSummary(null);
+                return;
+            }
+            const harnesses = Array.isArray(brief.totals.harnesses) ?
+                brief.totals.harnesses.map(displayHarness).filter(Boolean) : [];
+            const sessionCount = toFiniteNumber(brief.totals.sessions);
+            elements.briefHeading.textContent =
+                sessionCount === 0 ?
+                "Waiting for your first session" :
+                "Your recent sessions at a glance";
+            const harnessCopy = harnesses.length ?
+                ` from ${harnesses.join(" and ")}` :
+                "";
+            elements.briefWindow.textContent = `Across ${formatNumber(sessionCount)} retained ${sessionCount === 1 ? "session" : "sessions"}${harnessCopy}`;
+            elements.briefStatus.textContent = initializationInProgress() ?
+                "Importing earlier sessions…" :
+                `Updated ${formatRelativeTime(brief.generated_at) || "just now"}`;
+            renderReportTotals(brief);
+            renderReportIssues(brief.top_issues);
+            renderReportFixes(brief.fixes);
+            renderReportWaste(brief.waste);
+            renderReportAbout(brief.about);
+            renderReportCoverageSummary(brief.about, brief.totals);
+        }
 
-  function renderReportTotals(report) {
-    const totals = report.totals;
-    elements.briefSessionCount.textContent = formatNumber(totals.sessions);
-    elements.briefAgentCount.textContent =
-      `${totals.hours_lower_bound === true ? "≥" : ""}${formatNumber(totals.hours)} h`;
-    elements.briefOutcomeCount.textContent =
-      `${totals.tokens_lower_bound === true ? "≥" : ""}${formatNumber(totals.tokens)}`;
-    elements.briefLatestActivity.textContent =
-      `${totals.dollars_lower_bound === true ? "≥" : ""}${formatReportDollars(totals.dollars)}`;
-    const weeks = report.weeks.slice(-12);
-    const maximum = Math.max(
-      1,
-      ...weeks.map((week) => toFiniteNumber(week && week.session_count)),
-    );
-    const fragment = document.createDocumentFragment();
-    weeks.forEach((week) => {
-      const sessions = toFiniteNumber(week && week.session_count);
-      const bar = createElement("span", "report-spark-bar");
-      bar.style.height =
-        sessions === 0
-          ? "0"
-          : `${Math.max(8, (sessions / maximum) * 100)}%`;
-      bar.title = `${formatFullDate(parseDate(week && week.week_start)) || "Week"} · ${formatNumber(sessions)} ${sessions === 1 ? "session" : "sessions"} · ${week && week.cost_lower_bound === true ? "at least " : ""}${formatReportDollars(week && week.total_cost_usd)}`;
-      fragment.append(bar);
-    });
-    elements.reportSparkline.replaceChildren(fragment);
-    elements.reportSparkline.hidden = weeks.length === 0;
-  }
+        function renderReportCoverageSummary(about, totals) {
+            const coverage = isRecord(about && about.transcript_coverage) ?
+                about.transcript_coverage : {};
+            const retained = toFiniteNumber(totals && totals.sessions);
+            const withTranscript = toFiniteNumber(coverage.with_transcript);
+            const partial = toFiniteNumber(coverage.partial);
+            const withoutTranscript = toFiniteNumber(coverage.without_transcript);
+            const incomplete = partial + withoutTranscript;
+            elements.reportCoverageWithTranscript.textContent = formatNumber(withTranscript);
+            elements.reportCoverageIncomplete.textContent = formatNumber(incomplete);
+            if (retained === 0) {
+                elements.reportCoverageStatus.textContent =
+                    "No retained activity has been captured yet, so there is nothing to conclude from.";
+            } else if (incomplete > 0) {
+                elements.reportCoverageStatus.textContent =
+                    `${formatNumber(incomplete)} of ${formatNumber(retained)} retained sessions have incomplete evidence. A quiet report may reflect limited capture.`;
+            } else {
+                elements.reportCoverageStatus.textContent =
+                    "All retained sessions have transcript evidence available for review.";
+            }
+        }
 
-  function renderReportIssues(issues) {
-    focusRegistry.missionPackTriggers.clear();
-    focusRegistry.reportEvidenceTriggers.clear();
-    const fragment = document.createDocumentFragment();
-    issues.forEach((issue, index) => {
-      fragment.append(createReportIssueCard(issue, index));
-    });
-    elements.briefActionList.replaceChildren(fragment);
-    elements.briefActionsEmpty.hidden = issues.length !== 0;
-  }
+        function renderReportTotals(report) {
+            const totals = report.totals;
+            elements.briefSessionCount.textContent = formatNumber(totals.sessions);
+            elements.briefAgentCount.textContent = `${totals.hours_lower_bound === true ? "≥" : ""}${formatNumber(totals.hours)} h`;
+            elements.briefOutcomeCount.textContent = `${totals.tokens_lower_bound === true ? "≥" : ""}${formatNumber(totals.tokens)}`;
+            elements.briefLatestActivity.textContent = `${totals.dollars_lower_bound === true ? "≥" : ""}${formatReportDollars(totals.dollars)}`;
+            const weeks = report.weeks.slice(-12);
+            const maximum = Math.max(
+                1,
+                ...weeks.map((week) => toFiniteNumber(week && week.session_count)),
+            );
+            const fragment = document.createDocumentFragment();
+            weeks.forEach((week) => {
+                const sessions = toFiniteNumber(week && week.session_count);
+                const bar = createElement("span", "report-spark-bar");
+                bar.style.height =
+                    sessions === 0 ? "0" : `${Math.max(8, (sessions / maximum) * 100)}%`;
+                bar.title = `${formatFullDate(parseDate(week && week.week_start)) || "Week"} · ${formatNumber(sessions)} ${sessions === 1 ? "session" : "sessions"} · ${week && week.cost_lower_bound === true ? "at least " : ""}${formatReportDollars(week && week.total_cost_usd)}`;
+                fragment.append(bar);
+            });
+            elements.reportSparkline.replaceChildren(fragment);
+            elements.reportSparkline.hidden = weeks.length === 0;
+        }
 
-  function createReportIssueCard(issue, index) {
-    const card = createElement("article", "brief-action-card report-issue-card");
-    card.dataset.priority = index === 0 ? "primary" : "secondary";
-    card.append(
-      createElement(
-        "h3",
-        "report-issue-headline",
-        humanizeReportHeadline(issue.headline),
-      ),
-      createElement(
-        "p",
-        "brief-evidence report-issue-metrics",
-        [
-          formatIssueDollarCost(issue.cost),
-          formatIssueMinutes(issue.cost),
-          `${formatNumber(issue.session_count)} ${toFiniteNumber(issue.session_count) === 1 ? "session" : "sessions"}`,
-          reportTrendSummary(issue.trend),
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      ),
-    );
-    card.append(createIssueEvidenceBasis(issue));
-    if (issue.excerpts.length) {
-      card.append(createReportIssuePreview(issue.excerpts[0]));
-    }
-    const fix = createElement("div", "report-issue-fix");
-    fix.append(
-      createElement(
-        "strong",
-        "report-issue-fix-target",
-        `Suggested fix · ${compactDisplayPath(issue.suggested_fix.target_file) || "Agent instructions"}`,
-      ),
-      createElement(
-        "p",
-        "report-issue-fix-rationale",
-        readText(issue.suggested_fix.rationale) ||
-          "Add a durable project instruction for this pattern.",
-      ),
-    );
-    card.append(fix);
-    const actions = createElement("div", "report-card-actions");
-    const prepareButton = createElement(
-      "button",
-      "primary-button",
-      "Use in next session",
-    );
-    prepareButton.type = "button";
-    prepareButton.setAttribute("aria-haspopup", "dialog");
-    prepareButton.setAttribute("aria-controls", "mission-pack-dialog");
-    prepareButton.addEventListener("click", () => {
-      openMissionPackDrawer(issue);
-    });
-    const evidenceButton = createElement(
-      "button",
-      "secondary-button",
-      "Show evidence",
-    );
-    evidenceButton.type = "button";
-    evidenceButton.setAttribute("aria-haspopup", "dialog");
-    evidenceButton.setAttribute("aria-controls", "report-evidence-dialog");
-    evidenceButton.addEventListener("click", () => {
-      openReportEvidenceDrawer(issue);
-    });
-    const issueID = readText(issue.issue_id);
-    if (issueID) {
-      focusRegistry.missionPackTriggers.set(issueID, prepareButton);
-      focusRegistry.reportEvidenceTriggers.set(issueID, evidenceButton);
-    }
-    actions.append(prepareButton, evidenceButton);
-    card.append(actions);
-    return card;
-  }
+        function renderReportIssues(issues) {
+            focusRegistry.missionPackTriggers.clear();
+            focusRegistry.reportEvidenceTriggers.clear();
+            const fragment = document.createDocumentFragment();
+            issues.forEach((issue, index) => {
+                fragment.append(createReportIssueCard(issue, index));
+            });
+            elements.briefActionList.replaceChildren(fragment);
+            elements.briefActionsSection.hidden = false;
+            elements.briefActionsEmpty.hidden = issues.length !== 0;
+        }
 
-  function createReportIssuePreview(excerpt) {
-    const wrapper = createElement("div", "report-issue-preview");
-    const citation = isRecord(excerpt && excerpt.citation)
-      ? excerpt.citation
-      : {};
-    const role = readableLabel(excerpt && excerpt.role, "Transcript");
-    const tool = readText(excerpt && excerpt.tool_name);
-    const turn = Number.isFinite(Number(citation.turn_index))
-      ? `turn ${formatNumber(citation.turn_index)}`
-      : "";
-    const occurredAt = formatFullDate(parseDate(citation.occurred_at));
-    wrapper.append(
-      createElement(
-        "p",
-        "report-issue-preview-citation",
-        [role, tool, turn, occurredAt].filter(Boolean).join(" · "),
-      ),
-      createElement(
-        "blockquote",
-        "",
-        truncateReportPreview(
-          readText(excerpt && excerpt.text) || "Excerpt unavailable",
-        ),
-      ),
-    );
-    return wrapper;
-  }
+        function createReportIssueCard(issue, index) {
+            const card = createElement(
+                "article",
+                "brief-action-card report-issue-card",
+            );
+            card.dataset.priority = index === 0 ? "primary" : "secondary";
+            card.append(
+                createElement(
+                    "h3",
+                    "report-issue-headline",
+                    humanizeReportHeadline(issue.headline),
+                ),
+                createElement(
+                    "p",
+                    "brief-evidence report-issue-metrics", [
+                        formatIssueDollarCost(issue.cost),
+                        formatIssueMinutes(issue.cost),
+                        `${formatNumber(issue.session_count)} ${toFiniteNumber(issue.session_count) === 1 ? "session" : "sessions"}`,
+                        reportTrendSummary(issue.trend),
+                    ]
+                    .filter(Boolean)
+                    .join(" · "),
+                ),
+            );
+            card.append(createIssueEvidenceBasis(issue));
+            if (issue.excerpts.length) {
+                card.append(createReportIssuePreview(issue.excerpts[0]));
+            }
+            const fix = createElement("div", "report-issue-fix");
+            fix.append(
+                createElement(
+                    "strong",
+                    "report-issue-fix-target",
+                    `Suggested fix · ${compactDisplayPath(issue.suggested_fix.target_file) || "Agent instructions"}`,
+                ),
+                createElement(
+                    "p",
+                    "report-issue-fix-rationale",
+                    readText(issue.suggested_fix.rationale) ||
+                    "Add a durable project instruction for this pattern.",
+                ),
+            );
+            card.append(fix);
+            const actions = createElement("div", "report-card-actions");
+            const prepareButton = createElement(
+                "button",
+                "primary-button",
+                "Use in next session",
+            );
+            prepareButton.type = "button";
+            prepareButton.setAttribute("aria-haspopup", "dialog");
+            prepareButton.setAttribute("aria-controls", "mission-pack-dialog");
+            prepareButton.addEventListener("click", () => {
+                openMissionPackDrawer(issue);
+            });
+            const evidenceButton = createElement(
+                "button",
+                "secondary-button",
+                "Show evidence",
+            );
+            evidenceButton.type = "button";
+            evidenceButton.setAttribute("aria-haspopup", "dialog");
+            evidenceButton.setAttribute("aria-controls", "report-evidence-dialog");
+            evidenceButton.addEventListener("click", () => {
+                openReportEvidenceDrawer(issue);
+            });
+            const issueID = readText(issue.issue_id);
+            if (issueID) {
+                focusRegistry.missionPackTriggers.set(issueID, prepareButton);
+                focusRegistry.reportEvidenceTriggers.set(issueID, evidenceButton);
+            }
+            actions.append(prepareButton, evidenceButton);
+            card.append(actions);
+            return card;
+        }
 
-  function truncateReportPreview(value) {
-    const characters = Array.from(readText(value));
-    if (characters.length <= 220) return characters.join("");
-    const candidate = characters.slice(0, 220).join("");
-    const boundary = candidate.search(/\s+\S*$/);
-    const clipped = boundary >= 160 ? candidate.slice(0, boundary) : candidate;
-    return `${clipped.trimEnd()}…`;
-  }
+        function createReportIssuePreview(excerpt) {
+            const wrapper = createElement("div", "report-issue-preview");
+            const citation = isRecord(excerpt && excerpt.citation) ?
+                excerpt.citation : {};
+            const role = readableLabel(excerpt && excerpt.role, "Transcript");
+            const tool = readText(excerpt && excerpt.tool_name);
+            const turn = Number.isFinite(Number(citation.turn_index)) ?
+                `turn ${formatNumber(citation.turn_index)}` :
+                "";
+            const occurredAt = formatFullDate(parseDate(citation.occurred_at));
+            wrapper.append(
+                createElement(
+                    "p",
+                    "report-issue-preview-citation", [role, tool, turn, occurredAt].filter(Boolean).join(" · "),
+                ),
+                createElement(
+                    "blockquote",
+                    "",
+                    truncateReportPreview(
+                        readText(excerpt && excerpt.text) || "Excerpt unavailable",
+                    ),
+                ),
+            );
+            return wrapper;
+        }
 
-  function compactDisplayPath(value) {
-    const path = readText(value).trim().replace(/[\\/]+$/, "");
-    if (!path) return "";
-    const segments = path.split(/[\\/]/).filter(Boolean);
-    return segments[segments.length - 1] || path;
-  }
+        function truncateReportPreview(value) {
+            const characters = Array.from(readText(value));
+            if (characters.length <= 220) return characters.join("");
+            const candidate = characters.slice(0, 220).join("");
+            const boundary = candidate.search(/\s+\S*$/);
+            const clipped = boundary >= 160 ? candidate.slice(0, boundary) : candidate;
+            return `${clipped.trimEnd()}…`;
+        }
 
-  function humanizeReportHeadline(value) {
-    let headline = readText(value).trim();
-    if (!headline) return "Recurring agent pattern";
-    headline = headline.replace(/`([^`]*[\\/][^`]*)`/g, (_, path) => {
-      return `\`${compactDisplayPath(path)}\``;
-    });
-    headline = headline.replace(
-      /(?:\/Users\/|\/home\/|\/private\/|[A-Za-z]:\\)[^\s,;:()[\]{}]+/g,
-      (path) => compactDisplayPath(path),
-    );
-    headline = headline.replace(/\b1 sessions\b/gi, "1 session");
-    return headline;
-  }
+        function compactDisplayPath(value) {
+            const path = readText(value)
+                .trim()
+                .replace(/[\\/]+$/, "");
+            if (!path) return "";
+            const segments = path.split(/[\\/]/).filter(Boolean);
+            return segments[segments.length - 1] || path;
+        }
 
-  function clearMissionPackCache() {
-    state.missionPackCacheGeneration += 1;
-    missionPackCacheByID.clear();
-    missionPackIDByIssue.clear();
-  }
+        function humanizeReportHeadline(value) {
+            let headline = readText(value).trim();
+            if (!headline) return "Recurring agent pattern";
+            headline = headline.replace(/`([^`]*[\\/][^`]*)`/g, (_, path) => {
+                return `\`${compactDisplayPath(path)}\``;
+            });
+            headline = headline.replace(
+                /(?:\/Users\/|\/home\/|\/private\/|[A-Za-z]:\\)[^\s,;:()[\]{}]+/g,
+                (path) => compactDisplayPath(path),
+            );
+            headline = headline.replace(/\b1 sessions\b/gi, "1 session");
+            return headline;
+        }
 
-  function openMissionPackDrawer(issue) {
-    const issueID = readText(issue && issue.issue_id);
-    if (!issueID) return;
-    state.dialogReturnFocus = { type: "mission-pack", issueID };
-    state.activeModal = "mission-pack";
-    state.missionPackIssue = issue;
-    state.missionPack = null;
-    elements.missionPackTitle.textContent = "Agent guidance";
-    resetMissionPackDrawer();
-    openModalLayer(
-      elements.missionPackModalLayer,
-      elements.missionPackDialog,
-      elements.missionPackClose,
-    );
-    void loadMissionPack(issueID);
-  }
+        function clearMissionPackCache() {
+            state.missionPackCacheGeneration += 1;
+            missionPackCacheByID.clear();
+            missionPackIDByIssue.clear();
+        }
 
-  function resetMissionPackDrawer() {
-    elements.missionPackLoading.hidden = false;
-    elements.missionPackError.hidden = true;
-    elements.missionPackErrorDetail.textContent = "";
-    elements.missionPackContent.hidden = true;
-    elements.missionPackMetadata.replaceChildren();
-    elements.missionPackSections.replaceChildren();
-    elements.missionPackSize.textContent = "";
-    elements.missionPackCopyClaude.disabled = true;
-    elements.missionPackCopyCodex.disabled = true;
-    elements.missionPackShowEvidence.disabled = !readText(
-      state.missionPackIssue && state.missionPackIssue.issue_id,
-    );
-  }
+        function openMissionPackDrawer(issue) {
+            const issueID = readText(issue && issue.issue_id);
+            if (!issueID) return;
+            state.dialogReturnFocus = { type: "mission-pack", issueID };
+            state.activeModal = "mission-pack";
+            state.missionPackIssue = issue;
+            state.missionPack = null;
+            elements.missionPackTitle.textContent = "Agent guidance";
+            resetMissionPackDrawer();
+            openModalLayer(
+                elements.missionPackModalLayer,
+                elements.missionPackDialog,
+                elements.missionPackClose,
+            );
+            void loadMissionPack(issueID);
+        }
 
-  async function loadMissionPack(issueID) {
-    const cachedPackID = missionPackIDByIssue.get(issueID);
-    const cachedPack = cachedPackID
-      ? missionPackCacheByID.get(cachedPackID)
-      : null;
-    if (cachedPack) {
-      state.missionPack = cachedPack;
-      renderMissionPack(cachedPack);
-      return;
-    }
-    if (
-      state.missionPackRequestController &&
-      typeof state.missionPackRequestController.abort === "function"
-    ) {
-      state.missionPackRequestController.abort();
-    }
-    const controller =
-      typeof globalThis.AbortController === "function"
-        ? new globalThis.AbortController()
-        : null;
-    state.missionPackRequestController = controller;
-    const requestGeneration = ++state.missionPackRequestGeneration;
-    const cacheGeneration = state.missionPackCacheGeneration;
-    try {
-      const response = await apiGet(
-        `/v1/mission-pack?issue_id=${encodeURIComponent(issueID)}&intent=general`,
-        controller ? controller.signal : undefined,
-      );
-      if (
-        requestGeneration !== state.missionPackRequestGeneration ||
-        state.activeModal !== "mission-pack" ||
-        readText(state.missionPackIssue && state.missionPackIssue.issue_id) !==
-          issueID
-      ) {
-        return;
-      }
-      const pack = requireMissionPack(response);
-      state.missionPack = pack;
-      if (cacheGeneration === state.missionPackCacheGeneration) {
-        missionPackCacheByID.set(pack.pack_id, pack);
-        missionPackIDByIssue.set(issueID, pack.pack_id);
-      }
-      renderMissionPack(pack);
-    } catch (error) {
-      const aborted = Boolean(controller && controller.signal.aborted);
-      if (
-        aborted ||
-        requestGeneration !== state.missionPackRequestGeneration ||
-        state.activeModal !== "mission-pack"
-      ) {
-        return;
-      }
-      elements.missionPackLoading.hidden = true;
-      elements.missionPackContent.hidden = true;
-      elements.missionPackError.hidden = false;
-      elements.missionPackErrorDetail.textContent = customerErrorMessage(
-        error,
-        "Belay could not prepare this Mission Pack.",
-      );
-    } finally {
-      if (state.missionPackRequestController === controller) {
-        state.missionPackRequestController = null;
-      }
-    }
-  }
+        function resetMissionPackDrawer() {
+            elements.missionPackLoading.hidden = false;
+            elements.missionPackError.hidden = true;
+            elements.missionPackErrorDetail.textContent = "";
+            elements.missionPackContent.hidden = true;
+            elements.missionPackMetadata.replaceChildren();
+            elements.missionPackSections.replaceChildren();
+            elements.missionPackSize.textContent = "";
+            elements.missionPackCopyClaude.disabled = true;
+            elements.missionPackCopyCodex.disabled = true;
+            elements.missionPackShowEvidence.disabled = !readText(
+                state.missionPackIssue && state.missionPackIssue.issue_id,
+            );
+        }
 
-  function requireMissionPack(response) {
-    if (
-      !isRecord(response) ||
-      readText(response.schema_version) !== "belay.mission-pack.v1" ||
-      !readText(response.pack_id) ||
-      !isRecord(response.project) ||
-      !isRecord(response.source_state) ||
-      !Array.isArray(response.known_traps) ||
-      !Array.isArray(response.operating_rules) ||
-      !Array.isArray(response.verification) ||
-      !Array.isArray(response.completion_checklist) ||
-      !Array.isArray(response.warnings)
-    ) {
-      throw new Error("Local API returned an invalid Mission Pack.");
-    }
-    return response;
-  }
+        async function loadMissionPack(issueID) {
+            const cachedPackID = missionPackIDByIssue.get(issueID);
+            const cachedPack = cachedPackID ?
+                missionPackCacheByID.get(cachedPackID) :
+                null;
+            if (cachedPack) {
+                state.missionPack = cachedPack;
+                renderMissionPack(cachedPack);
+                return;
+            }
+            if (
+                state.missionPackRequestController &&
+                typeof state.missionPackRequestController.abort === "function"
+            ) {
+                state.missionPackRequestController.abort();
+            }
+            const controller =
+                typeof globalThis.AbortController === "function" ?
+                new globalThis.AbortController() :
+                null;
+            state.missionPackRequestController = controller;
+            const requestGeneration = ++state.missionPackRequestGeneration;
+            const cacheGeneration = state.missionPackCacheGeneration;
+            try {
+                const response = await apiGet(
+                    `/v1/mission-pack?issue_id=${encodeURIComponent(issueID)}&intent=general`,
+                    controller ? controller.signal : undefined,
+                );
+                if (
+                    requestGeneration !== state.missionPackRequestGeneration ||
+                    state.activeModal !== "mission-pack" ||
+                    readText(state.missionPackIssue && state.missionPackIssue.issue_id) !==
+                    issueID
+                ) {
+                    return;
+                }
+                const pack = requireMissionPack(response);
+                state.missionPack = pack;
+                if (cacheGeneration === state.missionPackCacheGeneration) {
+                    missionPackCacheByID.set(pack.pack_id, pack);
+                    missionPackIDByIssue.set(issueID, pack.pack_id);
+                }
+                renderMissionPack(pack);
+            } catch (error) {
+                const aborted = Boolean(controller && controller.signal.aborted);
+                if (
+                    aborted ||
+                    requestGeneration !== state.missionPackRequestGeneration ||
+                    state.activeModal !== "mission-pack"
+                ) {
+                    return;
+                }
+                elements.missionPackLoading.hidden = true;
+                elements.missionPackContent.hidden = true;
+                elements.missionPackError.hidden = false;
+                elements.missionPackErrorDetail.textContent = customerErrorMessage(
+                    error,
+                    "Belay could not prepare this Mission Pack.",
+                );
+            } finally {
+                if (state.missionPackRequestController === controller) {
+                    state.missionPackRequestController = null;
+                }
+            }
+        }
 
-  function renderMissionPack(pack) {
-    const isEmpty = readText(pack.status).toLowerCase() === "empty";
-    elements.missionPackLoading.hidden = true;
-    elements.missionPackError.hidden = true;
-    elements.missionPackContent.hidden = false;
-    elements.missionPackCopyClaude.disabled = isEmpty;
-    elements.missionPackCopyCodex.disabled = isEmpty;
-    const fragment = document.createDocumentFragment();
-    if (isEmpty) {
-      elements.missionPackTitle.textContent = "Agent guidance";
-      elements.missionPackMetadata.replaceChildren();
-      fragment.append(
-        createElement(
-          "p",
-          "mission-pack-empty",
-          "Belay found no useful guidance for this session.",
-        ),
-      );
-    } else {
-      const projectLabel = readText(pack.project.label);
-      elements.missionPackTitle.textContent = projectLabel
-        ? `Guidance for ${projectLabel}`
-        : "Agent guidance";
-      renderMissionPackMetadata(pack);
-      if (pack.known_traps.length) {
-        appendMissionPackGuidanceSection(
-          fragment,
-          "Known traps",
-          pack.known_traps,
-          createMissionPackTrap,
-          "",
-        );
-      }
-      if (pack.operating_rules.length) {
-        appendMissionPackGuidanceSection(
-          fragment,
-          "Operating rules",
-          pack.operating_rules,
-          createMissionPackRule,
-          "",
-        );
-      }
-      if (pack.verification.length) {
-        appendMissionPackGuidanceSection(
-          fragment,
-          "Verification",
-          pack.verification,
-          createMissionPackCommand,
-          "",
-        );
-      }
-      if (pack.completion_checklist.length) {
-        appendMissionPackGuidanceSection(
-          fragment,
-          "Completion checklist",
-          pack.completion_checklist,
-          createMissionPackChecklistItem,
-          "",
-        );
-      }
-    }
-    elements.missionPackSections.replaceChildren(fragment);
-    elements.missionPackSize.textContent = "";
-  }
+        function requireMissionPack(response) {
+            if (!isRecord(response) ||
+                readText(response.schema_version) !== "belay.mission-pack.v1" ||
+                !readText(response.pack_id) ||
+                !isRecord(response.project) ||
+                !isRecord(response.source_state) ||
+                !Array.isArray(response.known_traps) ||
+                !Array.isArray(response.operating_rules) ||
+                !Array.isArray(response.verification) ||
+                !Array.isArray(response.completion_checklist) ||
+                !Array.isArray(response.warnings)
+            ) {
+                throw new Error("Local API returned an invalid Mission Pack.");
+            }
+            return response;
+        }
 
-  function renderMissionPackMetadata(pack) {
-    const rows = [];
-    const branch = readText(pack.project.branch);
-    const intent = readText(pack.intent);
-    if (branch) rows.push(["Branch", branch]);
-    if (intent) rows.push(["Intent", readableLabel(intent, "General")]);
-    const fragment = document.createDocumentFragment();
-    rows.forEach(([label, value]) => {
-      const row = createElement("div");
-      row.append(
-        createElement("dt", "", label),
-        createElement("dd", "", value),
-      );
-      fragment.append(row);
-    });
-    elements.missionPackMetadata.replaceChildren(fragment);
-  }
+        function renderMissionPack(pack) {
+            const isEmpty = readText(pack.status).toLowerCase() === "empty";
+            elements.missionPackLoading.hidden = true;
+            elements.missionPackError.hidden = true;
+            elements.missionPackContent.hidden = false;
+            elements.missionPackCopyClaude.disabled = isEmpty;
+            elements.missionPackCopyCodex.disabled = isEmpty;
+            const fragment = document.createDocumentFragment();
+            if (isEmpty) {
+                elements.missionPackTitle.textContent = "Agent guidance";
+                elements.missionPackMetadata.replaceChildren();
+                fragment.append(
+                    createElement(
+                        "p",
+                        "mission-pack-empty",
+                        "Belay found no useful guidance for this session.",
+                    ),
+                );
+            } else {
+                const projectLabel = readText(pack.project.label);
+                elements.missionPackTitle.textContent = projectLabel ?
+                    `Guidance for ${projectLabel}` :
+                    "Agent guidance";
+                renderMissionPackMetadata(pack);
+                if (pack.known_traps.length) {
+                    appendMissionPackGuidanceSection(
+                        fragment,
+                        "Known traps",
+                        pack.known_traps,
+                        createMissionPackTrap,
+                        "",
+                    );
+                }
+                if (pack.operating_rules.length) {
+                    appendMissionPackGuidanceSection(
+                        fragment,
+                        "Operating rules",
+                        pack.operating_rules,
+                        createMissionPackRule,
+                        "",
+                    );
+                }
+                if (pack.verification.length) {
+                    appendMissionPackGuidanceSection(
+                        fragment,
+                        "Verification",
+                        pack.verification,
+                        createMissionPackCommand,
+                        "",
+                    );
+                }
+                if (pack.completion_checklist.length) {
+                    appendMissionPackGuidanceSection(
+                        fragment,
+                        "Completion checklist",
+                        pack.completion_checklist,
+                        createMissionPackChecklistItem,
+                        "",
+                    );
+                }
+            }
+            elements.missionPackSections.replaceChildren(fragment);
+            elements.missionPackSize.textContent = "";
+        }
 
-  function appendMissionPackGuidanceSection(
-    parent,
-    title,
-    values,
-    itemBuilder,
-    emptyMessage,
-  ) {
-    const section = createElement("section", "mission-pack-section");
-    section.append(createElement("h3", "", title));
-    const list = createElement("div", "mission-pack-list");
-    if (Array.isArray(values) && values.length) {
-      values.forEach((value) => list.append(itemBuilder(value)));
-    } else {
-      list.append(createElement("p", "mission-pack-empty", emptyMessage));
-    }
-    section.append(list);
-    parent.append(section);
-  }
+        function renderMissionPackMetadata(pack) {
+            const rows = [];
+            const branch = readText(pack.project.branch);
+            const intent = readText(pack.intent);
+            if (branch) rows.push(["Branch", branch]);
+            if (intent) rows.push(["Intent", readableLabel(intent, "General")]);
+            const fragment = document.createDocumentFragment();
+            rows.forEach(([label, value]) => {
+                const row = createElement("div");
+                row.append(
+                    createElement("dt", "", label),
+                    createElement("dd", "", value),
+                );
+                fragment.append(row);
+            });
+            elements.missionPackMetadata.replaceChildren(fragment);
+        }
 
-  function createMissionPackTrap(value) {
-    const item = createElement("article", "mission-pack-item");
-    const cost = missionPackCost(value);
-    item.append(
-      createElement("h4", "mission-pack-clamp", readText(value.title)),
-    );
-    if (cost) {
-      item.append(createElement("p", "mission-pack-item-meta", cost));
-    }
-    return item;
-  }
+        function appendMissionPackGuidanceSection(
+            parent,
+            title,
+            values,
+            itemBuilder,
+            emptyMessage,
+        ) {
+            const section = createElement("section", "mission-pack-section");
+            section.append(createElement("h3", "", title));
+            const list = createElement("div", "mission-pack-list");
+            if (Array.isArray(values) && values.length) {
+                values.forEach((value) => list.append(itemBuilder(value)));
+            } else {
+                list.append(createElement("p", "mission-pack-empty", emptyMessage));
+            }
+            section.append(list);
+            parent.append(section);
+        }
 
-  function missionPackCost(value) {
-    if (typeof value.wasted_usd === "number") {
-      const amount = formatReportDollars(value.wasted_usd);
-      return value.cost_lower_bound === true ? `At least ${amount}` : amount;
-    }
-    if (toFiniteNumber(value.wasted_tokens) > 0) {
-      return `${formatNumber(value.wasted_tokens)} attributed tokens`;
-    }
-    return "";
-  }
+        function createMissionPackTrap(value) {
+            const item = createElement("article", "mission-pack-item");
+            const cost = missionPackCost(value);
+            item.append(
+                createElement("h4", "mission-pack-clamp", readText(value.title)),
+            );
+            if (cost) {
+                item.append(createElement("p", "mission-pack-item-meta", cost));
+            }
+            return item;
+        }
 
-  function createMissionPackRule(value) {
-    const item = createElement("article", "mission-pack-item");
-    item.append(createMissionPackExpandableText(readText(value.guidance)));
-    const badges = createElement("div", "mission-pack-badges");
-    if (readText(value.target_file)) {
-      badges.append(
-        createElement(
-          "span",
-          "mission-pack-badge",
-          `Target: ${compactDisplayPath(value.target_file)}`,
-        ),
-      );
-    }
-    if (badges.childNodes.length) item.append(badges);
-    return item;
-  }
+        function missionPackCost(value) {
+            if (typeof value.wasted_usd === "number") {
+                const amount = formatReportDollars(value.wasted_usd);
+                return value.cost_lower_bound === true ? `At least ${amount}` : amount;
+            }
+            if (toFiniteNumber(value.wasted_tokens) > 0) {
+                return `${formatNumber(value.wasted_tokens)} attributed tokens`;
+            }
+            return "";
+        }
 
-  function createMissionPackExpandableText(value) {
-    const text = value || "Rule text unavailable";
-    if (Array.from(text).length <= 220) {
-      return createElement("p", "mission-pack-guidance", text);
-    }
-    const details = createElement("details", "mission-pack-expandable");
-    details.append(
-      createElement("summary", "mission-pack-clamp", text),
-      createElement("p", "mission-pack-guidance", text),
-    );
-    return details;
-  }
+        function createMissionPackRule(value) {
+            const item = createElement("article", "mission-pack-item");
+            item.append(createMissionPackExpandableText(readText(value.guidance)));
+            const badges = createElement("div", "mission-pack-badges");
+            if (readText(value.target_file)) {
+                badges.append(
+                    createElement(
+                        "span",
+                        "mission-pack-badge",
+                        `Target: ${compactDisplayPath(value.target_file)}`,
+                    ),
+                );
+            }
+            if (badges.childNodes.length) item.append(badges);
+            return item;
+        }
 
-  function createMissionPackCommand(value) {
-    const item = createElement("article", "mission-pack-item");
-    item.append(
-      createElement("code", "mission-pack-command", readText(value.command)),
-    );
-    return item;
-  }
+        function createMissionPackExpandableText(value) {
+            const text = value || "Rule text unavailable";
+            if (Array.from(text).length <= 220) {
+                return createElement("p", "mission-pack-guidance", text);
+            }
+            const details = createElement("details", "mission-pack-expandable");
+            details.append(
+                createElement("summary", "mission-pack-clamp", text),
+                createElement("p", "mission-pack-guidance", text),
+            );
+            return details;
+        }
 
-  function createMissionPackChecklistItem(value) {
-    const item = createElement("p", "mission-pack-checklist");
-    item.append(
-      createElement("span", "mission-pack-checkbox", "□"),
-      document.createTextNode(readText(value.text) || "Checklist item unavailable"),
-    );
-    return item;
-  }
+        function createMissionPackCommand(value) {
+            const item = createElement("article", "mission-pack-item");
+            item.append(
+                createElement("code", "mission-pack-command", readText(value.command)),
+            );
+            return item;
+        }
 
-  function closeMissionPackDrawer(restoreFocus) {
-    if (
-      state.missionPackRequestController &&
-      typeof state.missionPackRequestController.abort === "function"
-    ) {
-      state.missionPackRequestController.abort();
-    }
-    state.missionPackRequestController = null;
-    state.missionPackRequestGeneration += 1;
-    closeModalLayer(
-      "mission-pack",
-      elements.missionPackModalLayer,
-      restoreFocus,
-    );
-    state.missionPackIssue = null;
-    state.missionPack = null;
-    elements.missionPackMetadata.replaceChildren();
-    elements.missionPackSections.replaceChildren();
-  }
+        function createMissionPackChecklistItem(value) {
+            const item = createElement("p", "mission-pack-checklist");
+            item.append(
+                createElement("span", "mission-pack-checkbox", "□"),
+                document.createTextNode(
+                    readText(value.text) || "Checklist item unavailable",
+                ),
+            );
+            return item;
+        }
 
-  function openReportEvidenceDrawer(issue) {
-    const issueID = readText(issue && issue.issue_id);
-    state.reportEvidenceIssueID = issueID;
-    state.dialogReturnFocus = { type: "report-evidence", issueID };
-    state.activeModal = "report-evidence";
-    elements.reportEvidenceTitle.textContent =
-      humanizeReportHeadline(issue && issue.headline);
-    const excerpts = Array.isArray(issue && issue.excerpts)
-      ? issue.excerpts
-      : [];
-    const excerptFragment = document.createDocumentFragment();
-    excerpts.forEach((excerpt) => {
-      excerptFragment.append(createReportEvidenceExcerpt(excerpt));
-    });
-    if (!excerpts.length) {
-      excerptFragment.append(
-        createElement("p", "overview-empty", "No transcript excerpts available."),
-      );
-    }
-    elements.reportEvidenceExcerpts.replaceChildren(excerptFragment);
-    renderReportEvidenceFix(issue && issue.suggested_fix);
-    elements.reportEvidenceCopyClaude.disabled = !issueID;
-    elements.reportEvidenceCopyCodex.disabled = !issueID;
-    openModalLayer(
-      elements.reportEvidenceModalLayer,
-      elements.reportEvidenceDialog,
-      elements.reportEvidenceClose,
-    );
-  }
+        function closeMissionPackDrawer(restoreFocus) {
+            if (
+                state.missionPackRequestController &&
+                typeof state.missionPackRequestController.abort === "function"
+            ) {
+                state.missionPackRequestController.abort();
+            }
+            state.missionPackRequestController = null;
+            state.missionPackRequestGeneration += 1;
+            closeModalLayer(
+                "mission-pack",
+                elements.missionPackModalLayer,
+                restoreFocus,
+            );
+            state.missionPackIssue = null;
+            state.missionPack = null;
+            elements.missionPackMetadata.replaceChildren();
+            elements.missionPackSections.replaceChildren();
+        }
 
-  function createReportEvidenceExcerpt(excerpt) {
-    const wrapper = createElement("article", "cost-issue-excerpt");
-    const citation = isRecord(excerpt && excerpt.citation)
-      ? excerpt.citation
-      : {};
-    const role = readableLabel(excerpt && excerpt.role, "Transcript");
-    const tool = readText(excerpt && excerpt.tool_name);
-    const session = readText(citation.session_key);
-    const turn = Number.isFinite(Number(citation.turn_index))
-      ? `turn ${formatNumber(citation.turn_index)}`
-      : "turn unavailable";
-    const occurredAt =
-      formatFullDate(parseDate(citation.occurred_at)) || "time unavailable";
-    const source = readText(citation.source_file_id);
-    const offset = Number.isFinite(Number(citation.jsonl_byte_offset))
-      ? `byte ${formatNumber(citation.jsonl_byte_offset)}`
-      : "byte offset unavailable";
-    wrapper.append(
-      createElement(
-        "p",
-        "cost-issue-citation report-evidence-citation",
-        [role, tool, turn, occurredAt]
-          .filter(Boolean)
-          .join(" · "),
-      ),
-      createElement(
-        "blockquote",
-        "",
-        readText(excerpt && excerpt.text) || "Excerpt unavailable",
-      ),
-    );
-    const technicalCitation = createElement(
-      "details",
-      "report-evidence-technical",
-    );
-    technicalCitation.append(
-      createElement("summary", "", "Technical citation"),
-      createElement(
-        "code",
-        "",
-        [session, source, offset].filter(Boolean).join(" · ") ||
-          "No additional citation details",
-      ),
-    );
-    wrapper.append(technicalCitation);
-    return wrapper;
-  }
+        function openReportEvidenceDrawer(issue) {
+            const issueID = readText(issue && issue.issue_id);
+            state.reportEvidenceIssueID = issueID;
+            state.dialogReturnFocus = { type: "report-evidence", issueID };
+            state.activeModal = "report-evidence";
+            elements.reportEvidenceTitle.textContent = humanizeReportHeadline(
+                issue && issue.headline,
+            );
+            const excerpts = Array.isArray(issue && issue.excerpts) ?
+                issue.excerpts : [];
+            const excerptFragment = document.createDocumentFragment();
+            excerpts.forEach((excerpt) => {
+                excerptFragment.append(createReportEvidenceExcerpt(excerpt));
+            });
+            if (!excerpts.length) {
+                excerptFragment.append(
+                    createElement(
+                        "p",
+                        "overview-empty",
+                        "No transcript excerpts available.",
+                    ),
+                );
+            }
+            elements.reportEvidenceExcerpts.replaceChildren(excerptFragment);
+            renderReportEvidenceFix(issue && issue.suggested_fix);
+            elements.reportEvidenceCopyClaude.disabled = !issueID;
+            elements.reportEvidenceCopyCodex.disabled = !issueID;
+            openModalLayer(
+                elements.reportEvidenceModalLayer,
+                elements.reportEvidenceDialog,
+                elements.reportEvidenceClose,
+            );
+        }
 
-  function renderReportEvidenceFix(value) {
-    const fix = isRecord(value) ? value : {};
-    const fragment = document.createDocumentFragment();
-    [
-      ["Kind", readableLabel(fix.kind, "Project instruction")],
-      [
-        "Target file",
-        compactDisplayPath(fix.target_file) || "Agent instructions",
-      ],
-      [
-        "Rationale",
-        readText(fix.rationale) ||
-          "Add a durable project instruction for this pattern.",
-      ],
-    ].forEach(([label, detail]) => {
-      const row = createElement("div");
-      row.append(
-        createElement("dt", "", label),
-        createElement("dd", "", detail),
-      );
-      fragment.append(row);
-    });
-    elements.reportEvidenceFix.replaceChildren(fragment);
-  }
+        function createReportEvidenceExcerpt(excerpt) {
+            const wrapper = createElement("article", "cost-issue-excerpt");
+            const citation = isRecord(excerpt && excerpt.citation) ?
+                excerpt.citation : {};
+            const role = readableLabel(excerpt && excerpt.role, "Transcript");
+            const tool = readText(excerpt && excerpt.tool_name);
+            const session = readText(citation.session_key);
+            const turn = Number.isFinite(Number(citation.turn_index)) ?
+                `turn ${formatNumber(citation.turn_index)}` :
+                "turn unavailable";
+            const occurredAt =
+                formatFullDate(parseDate(citation.occurred_at)) || "time unavailable";
+            const source = readText(citation.source_file_id);
+            const offset = Number.isFinite(Number(citation.jsonl_byte_offset)) ?
+                `byte ${formatNumber(citation.jsonl_byte_offset)}` :
+                "byte offset unavailable";
+            wrapper.append(
+                createElement(
+                    "p",
+                    "cost-issue-citation report-evidence-citation", [role, tool, turn, occurredAt].filter(Boolean).join(" · "),
+                ),
+                createElement(
+                    "blockquote",
+                    "",
+                    readText(excerpt && excerpt.text) || "Excerpt unavailable",
+                ),
+            );
+            const technicalCitation = createElement(
+                "details",
+                "report-evidence-technical",
+            );
+            technicalCitation.append(
+                createElement("summary", "", "Technical citation"),
+                createElement(
+                    "code",
+                    "", [session, source, offset].filter(Boolean).join(" · ") ||
+                    "No additional citation details",
+                ),
+            );
+            wrapper.append(technicalCitation);
+            return wrapper;
+        }
 
-  function closeReportEvidenceDrawer(restoreFocus) {
-    closeModalLayer(
-      "report-evidence",
-      elements.reportEvidenceModalLayer,
-      restoreFocus,
-    );
-    elements.reportEvidenceExcerpts.replaceChildren();
-    elements.reportEvidenceFix.replaceChildren();
-    state.reportEvidenceIssueID = "";
-  }
+        function renderReportEvidenceFix(value) {
+            const fix = isRecord(value) ? value : {};
+            const fragment = document.createDocumentFragment();
+            [
+                ["Kind", readableLabel(fix.kind, "Project instruction")],
+                [
+                    "Target file",
+                    compactDisplayPath(fix.target_file) || "Agent instructions",
+                ],
+                [
+                    "Rationale",
+                    readText(fix.rationale) ||
+                    "Add a durable project instruction for this pattern.",
+                ],
+            ].forEach(([label, detail]) => {
+                const row = createElement("div");
+                row.append(
+                    createElement("dt", "", label),
+                    createElement("dd", "", detail),
+                );
+                fragment.append(row);
+            });
+            elements.reportEvidenceFix.replaceChildren(fragment);
+        }
 
-  function reportTrendSummary(trend) {
-    if (!Array.isArray(trend) || trend.length < 2) return "";
-    const values = trend.slice(-8).map((week) => toFiniteNumber(week && week.count));
-    const latest = values[values.length - 1];
-    const prior = values.slice(0, -1).reduce((sum, value) => sum + value, 0);
-    const average = prior / Math.max(1, values.length - 1);
-    if (latest > average) return "trending up";
-    if (latest < average) return "trending down";
-    return "steady";
-  }
+        function closeReportEvidenceDrawer(restoreFocus) {
+            closeModalLayer(
+                "report-evidence",
+                elements.reportEvidenceModalLayer,
+                restoreFocus,
+            );
+            elements.reportEvidenceExcerpts.replaceChildren();
+            elements.reportEvidenceFix.replaceChildren();
+            state.reportEvidenceIssueID = "";
+        }
 
-  function renderReportFixes(fixes) {
-    const values = Array.isArray(fixes) ? fixes.slice(0, 20) : [];
-    const fragment = document.createDocumentFragment();
-    values.forEach((status) => {
-      const fix = isRecord(status && status.fix) ? status.fix : {};
-      const card = createElement("article", "brief-session-card report-fix-card");
-      const stateLabel =
-        readText(fix.state) === "applied" ? "Applied" : "Proposed";
-      card.append(
-        createElement(
-          "strong",
-          "",
-          `${stateLabel}: ${compactDisplayPath(fix.target_file) || "configuration"}`,
-        ),
-        createElement(
-          "p",
-          "",
-          readText(fix.rule_text) || "Fix rule unavailable",
-        ),
-        createElement(
-          "small",
-          "",
-          status && status.verification_state === "deferred"
-            ? "Recurrence and cost verification deferred"
-            : "Verification pending",
-        ),
-      );
-      fragment.append(card);
-    });
-    elements.briefRecentList.replaceChildren(fragment);
-    elements.briefRecentEmpty.hidden = values.length !== 0;
-  }
+        function reportTrendSummary(trend) {
+            if (!Array.isArray(trend) || trend.length < 2) return "";
+            const values = trend
+                .slice(-8)
+                .map((week) => toFiniteNumber(week && week.count));
+            const latest = values[values.length - 1];
+            const prior = values.slice(0, -1).reduce((sum, value) => sum + value, 0);
+            const average = prior / Math.max(1, values.length - 1);
+            if (latest > average) return "trending up";
+            if (latest < average) return "trending down";
+            return "steady";
+        }
 
-  function renderReportWaste(waste) {
-    const hasShare = waste && typeof waste.share_percent === "number";
-    const share = hasShare
-      ? `${formatNumber(waste.share_percent)}%`
-      : formatReportDollars(waste && waste.attributed_usd);
-    const prefix = waste && waste.lower_bound === true ? "At least " : "";
-    elements.briefAgentSummary.replaceChildren(
-      createElement("strong", "report-waste-number", `${prefix}${share}`),
-      createElement(
-        "p",
-        "",
-        hasShare
-          ? `${formatReportDollars(waste && waste.attributed_usd)} attributed to detected issues`
-          : waste && waste.total_incomplete === true
-            ? "Attributed waste; total spend is incomplete, so no percentage is shown."
-            : waste && waste.overlap_capped === true
-              ? "Attributed spend exceeds currently known priced spend, so no percentage is shown."
-              : "Attributed to detected issues.",
-      ),
-    );
-  }
+        function renderReportFixes(fixes) {
+            const values = Array.isArray(fixes) ? fixes.slice(0, 20) : [];
+            const fragment = document.createDocumentFragment();
+            values.forEach((status) => {
+                const fix = isRecord(status && status.fix) ? status.fix : {};
+                const card = createElement(
+                    "article",
+                    "brief-session-card report-fix-card",
+                );
+                const stateLabel =
+                    readText(fix.state) === "applied" ? "Applied" : "Proposed";
+                card.append(
+                    createElement(
+                        "strong",
+                        "",
+                        `${stateLabel}: ${compactDisplayPath(fix.target_file) || "configuration"}`,
+                    ),
+                    createElement(
+                        "p",
+                        "",
+                        readText(fix.rule_text) || "Fix rule unavailable",
+                    ),
+                    createElement(
+                        "small",
+                        "",
+                        status && status.verification_state === "deferred" ?
+                        "Recurrence and cost verification deferred" :
+                        "Verification pending",
+                    ),
+                );
+                fragment.append(card);
+            });
+            elements.briefRecentList.replaceChildren(fragment);
+            elements.briefRecentEmpty.hidden = values.length !== 0;
+        }
 
-  function renderReportAbout(about) {
-    const notes = Array.isArray(about && about.notes) ? about.notes : [];
-    elements.briefCoverage.open = false;
-    elements.briefCoverageSummary.textContent =
-      "Coverage, lower bounds, and calculation notes.";
-    const noteFragment = document.createDocumentFragment();
-    notes.forEach((note) => {
-      noteFragment.append(createElement("li", "", readText(note)));
-    });
-    elements.briefLimitations.replaceChildren(noteFragment);
-    const coverage = isRecord(about && about.transcript_coverage)
-      ? about.transcript_coverage
-      : {};
-    const sourceFragment = document.createDocumentFragment();
-    [
-      ["Sessions with transcript", coverage.with_transcript],
-      ["Partial transcript", coverage.partial],
-      ["Without transcript", coverage.without_transcript],
-      ["Transcript only", coverage.transcript_only],
-    ].forEach(([label, value]) => {
-      const row = createElement("div");
-      row.append(
-        createElement("dt", "", label),
-        createElement("dd", "", formatNumber(value)),
-      );
-      sourceFragment.append(row);
-    });
-    elements.briefSources.replaceChildren(sourceFragment);
-  }
+        function renderReportWaste(waste) {
+            const hasShare = waste && typeof waste.share_percent === "number";
+            const share = hasShare ?
+                `${formatNumber(waste.share_percent)}%` :
+                formatReportDollars(waste && waste.attributed_usd);
+            const prefix = waste && waste.lower_bound === true ? "At least " : "";
+            elements.briefAgentSummary.replaceChildren(
+                createElement("strong", "report-waste-number", `${prefix}${share}`),
+                createElement(
+                    "p",
+                    "",
+                    hasShare ?
+                    `${formatReportDollars(waste && waste.attributed_usd)} attributed to detected issues` :
+                    waste && waste.total_incomplete === true ?
+                    "Attributed waste; total spend is incomplete, so no percentage is shown." :
+                    waste && waste.overlap_capped === true ?
+                    "Attributed spend exceeds currently known priced spend, so no percentage is shown." :
+                    "Attributed to detected issues.",
+                ),
+            );
+        }
 
-  function formatReportDollars(value) {
-    const amount = Number(value);
-    if (!Number.isFinite(amount)) return "$0.00";
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(amount);
-  }
+        function renderReportAbout(about) {
+            const notes = Array.isArray(about && about.notes) ? about.notes : [];
+            elements.briefCoverage.open = false;
+            elements.briefCoverageSummary.textContent =
+                "Coverage, lower bounds, and calculation notes.";
+            const noteFragment = document.createDocumentFragment();
+            notes.forEach((note) => {
+                noteFragment.append(createElement("li", "", readText(note)));
+            });
+            elements.briefLimitations.replaceChildren(noteFragment);
+            const coverage = isRecord(about && about.transcript_coverage) ?
+                about.transcript_coverage : {};
+            const sourceFragment = document.createDocumentFragment();
+            [
+                ["Sessions with transcript", coverage.with_transcript],
+                ["Partial transcript", coverage.partial],
+                ["Without transcript", coverage.without_transcript],
+                ["Transcript only", coverage.transcript_only],
+            ].forEach(([label, value]) => {
+                const row = createElement("div");
+                row.append(
+                    createElement("dt", "", label),
+                    createElement("dd", "", formatNumber(value)),
+                );
+                sourceFragment.append(row);
+            });
+            elements.briefSources.replaceChildren(sourceFragment);
+        }
 
-  function renderBriefSummary(summary) {
-    if (!isRecord(summary)) {
-      elements.briefSessionCount.textContent = "—";
-      elements.briefAgentCount.textContent = "—";
-      elements.briefOutcomeCount.textContent = "—";
-      elements.briefLatestActivity.textContent = "—";
-      return;
-    }
-    const sessions = toFiniteNumber(summary.evaluated_session_count);
-    const harnesses = Array.isArray(summary.harnesses)
-      ? summary.harnesses.map(readText).filter(Boolean)
-      : [];
-    const outcomes = isRecord(summary.outcomes) ? summary.outcomes : {};
-    const reported =
-      toFiniteNumber(outcomes.succeeded) +
-      toFiniteNumber(outcomes.failed) +
-      toFiniteNumber(outcomes.interrupted);
-    elements.briefSessionCount.textContent =
-      `${formatNumber(sessions)}${summary.session_count_is_lower_bound === true ? "+" : ""}`;
-    elements.briefAgentCount.textContent = formatNumber(harnesses.length);
-    elements.briefOutcomeCount.textContent = formatNumber(reported);
-    elements.briefLatestActivity.textContent =
-      formatRelativeTime(summary.latest_observed_at) || "Unavailable";
-  }
+        function formatReportDollars(value) {
+            const amount = Number(value);
+            if (!Number.isFinite(amount)) return "$0.00";
+            return new Intl.NumberFormat(undefined, {
+                style: "currency",
+                currency: "USD",
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+            }).format(amount);
+        }
 
-  function renderBriefActions(brief) {
-    focusRegistry.briefActions.clear();
-    const cards = brief.action_cards.slice(0, 5);
-    const fragment = document.createDocumentFragment();
-    cards.forEach((card, index) => {
-      fragment.append(createBriefActionCard(card, index));
-    });
-    elements.briefActionList.replaceChildren(fragment);
-    const summary = brief.recent_summary;
-    const sessionCount = toFiniteNumber(summary.evaluated_session_count);
-    const complete = brief.coverage.complete === true;
-    const sessionsAvailable =
-      briefSourceStatus(brief, "sessions") !== "unavailable";
-    const initializing = initializationInProgress();
-    elements.briefActionsEmpty.hidden = cards.length !== 0;
-    if (cards.length === 0) {
-      elements.briefActionsEmptyTitle.textContent =
-        !sessionsAvailable
-          ? "Recent sessions could not be evaluated"
-          : initializing && sessionCount === 0
-            ? "No recent activity has been imported yet"
-          : sessionCount === 0
-          ? "No recorded agent activity in the last 24 hours"
-          : complete
-            ? "No reviewed action was identified in the evaluated activity"
-            : "No reviewed action is available from the activity evaluated so far";
-      elements.briefActionsEmptyDetail.textContent = experiencePageText(
-        !sessionsAvailable
-          ? "Attention may still contain reviewed findings, and stored activity remains available in Sessions."
-          : initializing && sessionCount === 0
-            ? "Initial import is still in progress; this result is partial and will update automatically."
-            : sessionCount === 0
-              ? "Older stored sessions remain available in Sessions."
-              : complete
-                ? "This is not a claim that all activity was successful or problem-free."
-                : "The brief is limited; review Coverage and limitations for what was not fully evaluated.",
-      );
-    }
-  }
+        function renderBriefSummary(summary) {
+            if (!isRecord(summary)) {
+                elements.briefSessionCount.textContent = "—";
+                elements.briefAgentCount.textContent = "—";
+                elements.briefOutcomeCount.textContent = "—";
+                elements.briefLatestActivity.textContent = "—";
+                return;
+            }
+            const sessions = toFiniteNumber(summary.evaluated_session_count);
+            const harnesses = Array.isArray(summary.harnesses) ?
+                summary.harnesses.map(readText).filter(Boolean) : [];
+            const outcomes = isRecord(summary.outcomes) ? summary.outcomes : {};
+            const reported =
+                toFiniteNumber(outcomes.succeeded) +
+                toFiniteNumber(outcomes.failed) +
+                toFiniteNumber(outcomes.interrupted);
+            elements.briefSessionCount.textContent = `${formatNumber(sessions)}${summary.session_count_is_lower_bound === true ? "+" : ""}`;
+            elements.briefAgentCount.textContent = formatNumber(harnesses.length);
+            elements.briefOutcomeCount.textContent = formatNumber(reported);
+            elements.briefLatestActivity.textContent =
+                formatRelativeTime(summary.latest_observed_at) || "Unavailable";
+        }
 
-  function createBriefActionCard(card, index) {
-    const cardID = readText(card && card.card_id) || `brief-action-${index}`;
-    const article = createElement("article", "brief-action-card");
-    const heading = createElement(
-      "h3",
-      "",
-      readText(card && card.title) || "Review recorded activity",
-    );
-    article.append(
-      heading,
-      createElement(
-        "p",
-        "brief-observation",
-        readText(card && card.observation) ||
-          "Belay recorded activity that may deserve review.",
-      ),
-    );
-    const evidence = briefEvidenceSummary(card && card.evidence);
-    if (evidence) {
-      article.append(createElement("p", "brief-evidence", evidence));
-    }
-    const limitation = readText(card && card.limitation);
-    if (limitation) {
-      article.append(createElement("p", "brief-limitation", limitation));
-    }
-    const nextStep = isRecord(card && card.next_step) ? card.next_step : {};
-    const button = createElement(
-      "button",
-      "primary-button",
-      readText(nextStep.label) || "Review evidence",
-    );
-    button.type = "button";
-    const reference = { type: "brief-action", key: cardID };
-    button.addEventListener("click", () => {
-      state.briefSelectionID = cardID;
-      void navigateSupportedNextStep(card, nextStep, reference);
-    });
-    if (!supportedNextStep(nextStep)) {
-      button.disabled = true;
-      button.textContent = "Next step unavailable";
-    }
-    focusRegistry.briefActions.set(cardID, button);
-    article.append(button);
-    return article;
-  }
+        function renderBriefActions(brief) {
+            focusRegistry.briefActions.clear();
+            const cards = brief.action_cards.slice(0, 5);
+            const fragment = document.createDocumentFragment();
+            cards.forEach((card, index) => {
+                fragment.append(createBriefActionCard(card, index));
+            });
+            elements.briefActionList.replaceChildren(fragment);
+            const summary = brief.recent_summary;
+            const sessionCount = toFiniteNumber(summary.evaluated_session_count);
+            const complete = brief.coverage.complete === true;
+            const sessionsAvailable =
+                briefSourceStatus(brief, "sessions") !== "unavailable";
+            const initializing = initializationInProgress();
+            elements.briefActionsEmpty.hidden = cards.length !== 0;
+            if (cards.length === 0) {
+                elements.briefActionsEmptyTitle.textContent = !sessionsAvailable ?
+                    "Recent sessions could not be evaluated" :
+                    initializing && sessionCount === 0 ?
+                    "No recent activity has been imported yet" :
+                    sessionCount === 0 ?
+                    "No recorded agent activity in the last 24 hours" :
+                    complete ?
+                    "No reviewed action was identified in the evaluated activity" :
+                    "No reviewed action is available from the activity evaluated so far";
+                elements.briefActionsEmptyDetail.textContent = experiencePageText(!sessionsAvailable ?
+                    "Attention may still contain reviewed findings, and stored activity remains available in Sessions." :
+                    initializing && sessionCount === 0 ?
+                    "Initial import is still in progress; this result is partial and will update automatically." :
+                    sessionCount === 0 ?
+                    "Older stored sessions remain available in Sessions." :
+                    complete ?
+                    "This is not a claim that all activity was successful or problem-free." :
+                    "The brief is limited; review Coverage and limitations for what was not fully evaluated.",
+                );
+            }
+        }
 
-  function briefEvidenceSummary(value) {
-    if (!isRecord(value)) return "";
-    const parts = [];
-    const sessionCount = toFiniteNumber(value.session_count);
-    const occurrenceCount = toFiniteNumber(value.occurrence_count);
-    const harnesses = Array.isArray(value.harnesses)
-      ? value.harnesses.map(displayHarness).filter(Boolean)
-      : [];
-    if (sessionCount) {
-      parts.push(
-        `${formatNumber(sessionCount)} ${
+        function createBriefActionCard(card, index) {
+            const cardID = readText(card && card.card_id) || `brief-action-${index}`;
+            const article = createElement("article", "brief-action-card");
+            const heading = createElement(
+                "h3",
+                "",
+                readText(card && card.title) || "Review recorded activity",
+            );
+            article.append(
+                heading,
+                createElement(
+                    "p",
+                    "brief-observation",
+                    readText(card && card.observation) ||
+                    "Belay recorded activity that may deserve review.",
+                ),
+            );
+            const evidence = briefEvidenceSummary(card && card.evidence);
+            if (evidence) {
+                article.append(createElement("p", "brief-evidence", evidence));
+            }
+            const limitation = readText(card && card.limitation);
+            if (limitation) {
+                article.append(createElement("p", "brief-limitation", limitation));
+            }
+            const nextStep = isRecord(card && card.next_step) ? card.next_step : {};
+            const button = createElement(
+                "button",
+                "primary-button",
+                readText(nextStep.label) || "Review evidence",
+            );
+            button.type = "button";
+            const reference = { type: "brief-action", key: cardID };
+            button.addEventListener("click", () => {
+                state.briefSelectionID = cardID;
+                void navigateSupportedNextStep(card, nextStep, reference);
+            });
+            if (!supportedNextStep(nextStep)) {
+                button.disabled = true;
+                button.textContent = "Next step unavailable";
+            }
+            focusRegistry.briefActions.set(cardID, button);
+            article.append(button);
+            return article;
+        }
+
+        function briefEvidenceSummary(value) {
+            if (!isRecord(value)) return "";
+            const parts = [];
+            const sessionCount = toFiniteNumber(value.session_count);
+            const occurrenceCount = toFiniteNumber(value.occurrence_count);
+            const harnesses = Array.isArray(value.harnesses) ?
+                value.harnesses.map(displayHarness).filter(Boolean) : [];
+            if (sessionCount) {
+                parts.push(
+                    `${formatNumber(sessionCount)} ${
           sessionCount === 1 ? "session" : "sessions"
         }`,
-      );
-    }
-    if (occurrenceCount) {
-      parts.push(
-        `${formatNumber(occurrenceCount)} ${
+                );
+            }
+            if (occurrenceCount) {
+                parts.push(
+                    `${formatNumber(occurrenceCount)} ${
           occurrenceCount === 1 ? "observation" : "observations"
         }`,
-      );
-    }
-    if (harnesses.length) parts.push(harnesses.join(", "));
-    if (parseDate(value.last_observed_at)) {
-      parts.push(`latest ${formatRelativeTime(value.last_observed_at)}`);
-    }
-    const outcome = normalizeOutcome(value.session_outcome);
-    if (explicitOutcomes.has(outcome)) {
-      parts.push(`agent reported ${explicitOutcomeLabel(outcome).toLowerCase()}`);
-    }
-    const eventCount = Number(value.event_count);
-    if (Number.isFinite(eventCount) && eventCount >= 0) {
-      parts.push(`${formatNumber(eventCount)} recorded events`);
-    }
-    return parts.join(" · ");
-  }
+                );
+            }
+            if (harnesses.length) parts.push(harnesses.join(", "));
+            if (parseDate(value.last_observed_at)) {
+                parts.push(`latest ${formatRelativeTime(value.last_observed_at)}`);
+            }
+            const outcome = normalizeOutcome(value.session_outcome);
+            if (explicitOutcomes.has(outcome)) {
+                parts.push(
+                    `agent reported ${explicitOutcomeLabel(outcome).toLowerCase()}`,
+                );
+            }
+            const eventCount = Number(value.event_count);
+            if (Number.isFinite(eventCount) && eventCount >= 0) {
+                parts.push(`${formatNumber(eventCount)} recorded events`);
+            }
+            return parts.join(" · ");
+        }
 
-  function renderBriefRecentWork(brief) {
-    focusRegistry.briefSessions.clear();
-    const sessions = brief.recent_work.slice(0, 8);
-    const fragment = document.createDocumentFragment();
-    sessions.forEach((session, index) => {
-      fragment.append(createBriefSessionCard(session, index));
-    });
-    elements.briefRecentList.replaceChildren(fragment);
-    elements.briefRecentEmpty.hidden = sessions.length !== 0;
-    if (sessions.length === 0) {
-      const sessionsAvailable =
-        briefSourceStatus(brief, "sessions") !== "unavailable";
-      const initializing = initializationInProgress();
-      elements.briefRecentEmptyTitle.textContent = !sessionsAvailable
-        ? "Recent work is unavailable"
-        : initializing
-          ? "No recent activity has been imported yet"
-          : "No recorded agent activity in the last 24 hours";
-      elements.briefRecentEmptyDetail.textContent = experiencePageText(
-        !sessionsAvailable
-          ? "Open Sessions to inspect stored activity directly."
-          : initializing
-            ? "Initial import is still in progress; this result is partial and will update automatically."
-            : "Older stored sessions remain available in Sessions.",
-      );
-    }
-  }
+        function renderBriefRecentWork(brief) {
+            focusRegistry.briefSessions.clear();
+            const sessions = brief.recent_work.slice(0, 8);
+            const fragment = document.createDocumentFragment();
+            sessions.forEach((session, index) => {
+                fragment.append(createBriefSessionCard(session, index));
+            });
+            elements.briefRecentList.replaceChildren(fragment);
+            elements.briefRecentEmpty.hidden = sessions.length !== 0;
+            if (sessions.length === 0) {
+                const sessionsAvailable =
+                    briefSourceStatus(brief, "sessions") !== "unavailable";
+                const initializing = initializationInProgress();
+                elements.briefRecentEmptyTitle.textContent = !sessionsAvailable ?
+                    "Recent work is unavailable" :
+                    initializing ?
+                    "No recent activity has been imported yet" :
+                    "No recorded agent activity in the last 24 hours";
+                elements.briefRecentEmptyDetail.textContent = experiencePageText(!sessionsAvailable ?
+                    "Open Sessions to inspect stored activity directly." :
+                    initializing ?
+                    "Initial import is still in progress; this result is partial and will update automatically." :
+                    "Older stored sessions remain available in Sessions.",
+                );
+            }
+        }
 
-  function initializationInProgress() {
-    return (
-      readText(state.initialization && state.initialization.state) ===
-      "initializing"
-    );
-  }
+        function initializationInProgress() {
+            return (
+                readText(state.initialization && state.initialization.state) ===
+                "initializing"
+            );
+        }
 
-  function briefSourceStatus(brief, sourceName) {
-    const sources =
-      brief && brief.coverage && Array.isArray(brief.coverage.sources)
-        ? brief.coverage.sources
-        : [];
-    const source = sources.find(
-      (candidate) => readText(candidate && candidate.source) === sourceName,
-    );
-    return readText(source && source.status);
-  }
+        function briefSourceStatus(brief, sourceName) {
+            const sources =
+                brief && brief.coverage && Array.isArray(brief.coverage.sources) ?
+                brief.coverage.sources : [];
+            const source = sources.find(
+                (candidate) => readText(candidate && candidate.source) === sourceName,
+            );
+            return readText(source && source.status);
+        }
 
-  function createBriefSessionCard(session, index) {
-    const sessionID = readText(session && session.session_id);
-    const card = createElement("article", "brief-session-card");
-    const button = createElement("button", "brief-session-button");
-    button.type = "button";
-    const harness = displayHarness(session && session.harness);
-    const outcome = normalizeOutcome(session && session.outcome);
-    const top = createElement("span", "brief-session-top");
-    top.append(
-      createElement("strong", "", `${harness} session`),
-      sessionOutcomeBadge(outcome),
-    );
-    button.append(
-      top,
-      createElement(
-        "span",
-        "brief-session-time",
-        formatFullDate(parseDate(session && session.started_at)) ||
-          "Session start unavailable",
-      ),
-      createElement(
-        "span",
-        "brief-session-meta",
-        [
-          formatEventCount(session && session.event_count),
-          briefHistoryLabel(session && session.history),
-          readText(session && session.outcome_explanation),
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      ),
-    );
-    const key = sessionID || `brief-session-${index}`;
-    const reference = { type: "brief-session", key };
-    button.addEventListener("click", () => {
-      const nextStep = isRecord(session && session.next_step)
-        ? session.next_step
-        : { kind: "open_session", session_id: sessionID };
-      void navigateSupportedNextStep(session, nextStep, reference);
-    });
-    button.disabled = !sessionID;
-    focusRegistry.briefSessions.set(key, button);
-    card.append(button);
-    return card;
-  }
+        function createBriefSessionCard(session, index) {
+            const sessionID = readText(session && session.session_id);
+            const card = createElement("article", "brief-session-card");
+            const button = createElement("button", "brief-session-button");
+            button.type = "button";
+            const harness = displayHarness(session && session.harness);
+            const outcome = normalizeOutcome(session && session.outcome);
+            const top = createElement("span", "brief-session-top");
+            top.append(
+                createElement("strong", "", `${harness} session`),
+                sessionOutcomeBadge(outcome),
+            );
+            button.append(
+                top,
+                createElement(
+                    "span",
+                    "brief-session-time",
+                    formatFullDate(parseDate(session && session.started_at)) ||
+                    "Session start unavailable",
+                ),
+                createElement(
+                    "span",
+                    "brief-session-meta", [
+                        formatEventCount(session && session.event_count),
+                        briefHistoryLabel(session && session.history),
+                        readText(session && session.outcome_explanation),
+                    ]
+                    .filter(Boolean)
+                    .join(" · "),
+                ),
+            );
+            const key = sessionID || `brief-session-${index}`;
+            const reference = { type: "brief-session", key };
+            button.addEventListener("click", () => {
+                const nextStep = isRecord(session && session.next_step) ?
+                    session.next_step : { kind: "open_session", session_id: sessionID };
+                void navigateSupportedNextStep(session, nextStep, reference);
+            });
+            button.disabled = !sessionID;
+            focusRegistry.briefSessions.set(key, button);
+            card.append(button);
+            return card;
+        }
 
-  function briefHistoryLabel(value) {
-    switch (readText(value)) {
-      case "historical":
-        return "Imported history";
-      case "mixed":
-        return "Live + imported history";
-      case "live":
-        return "Live";
-      default:
-        return "Collection unavailable";
-    }
-  }
+        function briefHistoryLabel(value) {
+            switch (readText(value)) {
+                case "historical":
+                    return "Imported history";
+                case "mixed":
+                    return "Live + imported history";
+                case "live":
+                    return "Live";
+                default:
+                    return "Collection unavailable";
+            }
+        }
 
-  function renderBriefAcrossAgents(summary) {
-    const container = elements.briefAgentSummary;
-    const harnesses =
-      isRecord(summary) && Array.isArray(summary.harnesses)
-        ? summary.harnesses.map(displayHarness).filter(Boolean)
-        : [];
-    const outcomes =
-      isRecord(summary) && isRecord(summary.outcomes) ? summary.outcomes : {};
-    const history =
-      isRecord(summary) && isRecord(summary.history) ? summary.history : {};
-    const fragment = document.createDocumentFragment();
-    fragment.append(
-      createBriefSummaryRow(
-        "Agents",
-        harnesses.length ? harnesses.join(", ") : "No agent activity evaluated",
-      ),
-      createBriefSummaryRow(
-        "Reported outcomes",
-        [
-          `${formatNumber(outcomes.succeeded)} succeeded`,
-          `${formatNumber(outcomes.failed)} failed`,
-          `${formatNumber(outcomes.interrupted)} interrupted`,
-          `${formatNumber(
+        function renderBriefAcrossAgents(summary) {
+            const container = elements.briefAgentSummary;
+            const harnesses =
+                isRecord(summary) && Array.isArray(summary.harnesses) ?
+                summary.harnesses.map(displayHarness).filter(Boolean) : [];
+            const outcomes =
+                isRecord(summary) && isRecord(summary.outcomes) ? summary.outcomes : {};
+            const history =
+                isRecord(summary) && isRecord(summary.history) ? summary.history : {};
+            const fragment = document.createDocumentFragment();
+            fragment.append(
+                createBriefSummaryRow(
+                    "Agents",
+                    harnesses.length ? harnesses.join(", ") : "No agent activity evaluated",
+                ),
+                createBriefSummaryRow(
+                    "Reported outcomes", [
+                        `${formatNumber(outcomes.succeeded)} succeeded`,
+                        `${formatNumber(outcomes.failed)} failed`,
+                        `${formatNumber(outcomes.interrupted)} interrupted`,
+                        `${formatNumber(
             toFiniteNumber(outcomes.incomplete) +
               toFiniteNumber(outcomes.unknown),
           )} not reported`,
-        ].join(" · "),
-      ),
-      createBriefSummaryRow(
-        "Collection",
-        [
-          `${formatNumber(history.live)} live`,
-          `${formatNumber(history.historical)} imported`,
-          `${formatNumber(history.mixed)} mixed`,
-        ].join(" · "),
-      ),
-    );
-    container.replaceChildren(fragment);
-  }
-
-  function createBriefSummaryRow(label, value) {
-    const row = createElement("div", "brief-agent-row");
-    row.append(
-      createElement("strong", "", label),
-      createElement("span", "", value),
-    );
-    return row;
-  }
-
-  function renderBriefCoverage(brief) {
-    const coverage = brief.coverage;
-    const limitations = coverage.limitations.slice(0, 20);
-    const sources = coverage.sources.slice(0, 10);
-    elements.briefCoverage.open =
-      readText(brief.status) === "limited" || coverage.complete !== true;
-    elements.briefCoverageSummary.textContent =
-      coverage.complete === true
-        ? state.experience === "value-first"
-          ? "All bounded Home sources completed for this view."
-          : "All bounded brief sources completed for this view."
-        : "Some activity or analysis could not be fully evaluated.";
-    const limitationFragment = document.createDocumentFragment();
-    limitations.forEach((limitation) => {
-      const message = readText(limitation && limitation.message);
-      if (message) limitationFragment.append(createElement("li", "", message));
-    });
-    if (!limitations.length && coverage.complete !== true) {
-      limitationFragment.append(
-        createElement(
-          "li",
-          "",
-          experiencePageText(
-            "Some sources were limited; use Attention or Sessions for the available detail.",
-          ),
-        ),
-      );
-    }
-    elements.briefLimitations.replaceChildren(limitationFragment);
-    const sourceFragment = document.createDocumentFragment();
-    sources.forEach((source) => {
-      const row = createElement("div");
-      row.append(
-        createElement("dt", "", briefSourceLabel(source && source.source)),
-        createElement(
-          "dd",
-          "",
-          briefSourceSummary(source),
-        ),
-      );
-      sourceFragment.append(row);
-    });
-    elements.briefSources.replaceChildren(sourceFragment);
-  }
-
-  function briefSourceLabel(value) {
-    const labels = {
-      sessions:
-        state.experience === "value-first" ? "History" : "Sessions",
-      attention_families: "Reviewed findings",
-      evidence_gaps: "Evidence gaps",
-    };
-    return labels[readText(value)] || "Local activity";
-  }
-
-  function briefSourceSummary(source) {
-    if (!isRecord(source)) return "Unavailable";
-    const status = readText(source.status);
-    const labels = {
-      complete: "Available",
-      truncated: "Limited",
-      ready: "Available",
-      limited: "Limited",
-      unavailable: "Unavailable",
-      failed: "Unavailable",
-    };
-    const parts = [labels[status] || "Status unavailable"];
-    const count = Number(source.evaluated_count);
-    if (Number.isFinite(count) && count >= 0) {
-      parts.push(`${formatNumber(count)} evaluated`);
-    }
-    if (source.has_more === true) parts.push("more records exist");
-    if (parseDate(source.as_of)) {
-      parts.push(`through ${formatFullDate(parseDate(source.as_of))}`);
-    }
-    return parts.join(" · ");
-  }
-
-  function supportedNextStep(nextStep) {
-    if (!isRecord(nextStep)) return false;
-    const kind = readText(nextStep.kind);
-    if (kind === "open_session") return Boolean(readText(nextStep.session_id));
-    if (kind === "open_issue") {
-      return Boolean(readText(nextStep.issue_id) && readCursor(nextStep.view_cursor));
-    }
-    if (kind === "open_attention_family") {
-      return Boolean(
-        readText(nextStep.family_id) &&
-          readText(nextStep.issue_id) &&
-          readCursor(nextStep.view_cursor),
-      );
-    }
-    return false;
-  }
-
-  async function navigateSupportedNextStep(card, nextStep, returnFocus) {
-    if (!supportedNextStep(nextStep)) return false;
-    const kind = readText(nextStep.kind);
-    if (kind === "open_session") {
-      state.sessionReturnFocus = returnFocus;
-      state.sessionReturnView =
-        returnFocus && returnFocus.type.startsWith("brief-")
-          ? "brief"
-          : "sessions";
-      openSession(readText(nextStep.session_id), null);
-      return true;
-    }
-    const catalog = briefNavigationCatalog(card);
-    if (kind === "open_attention_family") {
-      const family = {
-        family_id: readText(nextStep.family_id),
-        kind: "mapped_upstream",
-        representative_issue_id: readText(nextStep.issue_id),
-        view_cursor: readCursor(nextStep.view_cursor),
-        catalog,
-        severity: readText(card && card.severity) || "info",
-        confidence: "",
-        session_count: toFiniteNumber(card && card.evidence && card.evidence.session_count),
-        occurrence_count: toFiniteNumber(
-          card && card.evidence && card.evidence.occurrence_count,
-        ),
-        harnesses:
-          card && card.evidence && Array.isArray(card.evidence.harnesses)
-            ? card.evidence.harnesses
-            : [],
-        last_observed_at:
-          card && card.evidence && card.evidence.last_observed_at,
-        analysis_status: "current",
-      };
-      setActiveView("attention", false);
-      const result = selectAttentionFamily(family, true);
-      state.familyReturnFocus = returnFocus;
-      return result;
-    }
-    const issue = {
-      issue_id: readText(nextStep.issue_id),
-      title_code: readText(card && card.title_code),
-      severity: readText(card && card.severity) || "info",
-      confidence: "",
-      session_count: toFiniteNumber(card && card.evidence && card.evidence.session_count),
-      occurrence_count: toFiniteNumber(
-        card && card.evidence && card.evidence.occurrence_count,
-      ),
-      harnesses:
-        card && card.evidence && Array.isArray(card.evidence.harnesses)
-          ? card.evidence.harnesses
-          : [],
-      last_observed_at:
-        card && card.evidence && card.evidence.last_observed_at,
-      analysis_status: "current",
-    };
-    setActiveView("attention", false);
-    return selectIssue(
-      issue,
-      readText(card && card.kind) === "evidence_gap"
-        ? "evidence_gap"
-        : "issue",
-      true,
-      {
-      viewCursor: readCursor(nextStep.view_cursor),
-      catalog,
-      returnFocus,
-      },
-    );
-  }
-
-  function briefNavigationCatalog(card) {
-    return {
-      display_title: readText(card && card.title) || "Finding",
-      observation_statement:
-        readText(card && card.observation) ||
-        "Belay recorded activity that may deserve review.",
-      caveat:
-        readText(card && card.limitation) ||
-        "Review the supporting evidence before deciding what to do.",
-      next_evidence_action: "inspect_cited_events",
-    };
-  }
-
-  function prepareValueFirstAttentionLayout() {
-    const analysisDisclosure = createElement(
-      "details",
-      "attention-disclosure",
-    );
-    analysisDisclosure.id = "analysis-disclosure";
-    analysisDisclosure.append(
-      createElement("summary", "", "Analysis status and coverage"),
-      elements.coveragePanel,
-    );
-    const filterDisclosure = createElement(
-      "details",
-      "attention-disclosure",
-    );
-    filterDisclosure.id = "attention-filter-disclosure";
-    filterDisclosure.append(
-      createElement(
-        "summary",
-        "",
-        experienceCopy[state.experience].attentionFilterSummary,
-      ),
-      elements.attentionFilters,
-    );
-    elements.safetyContent = createElement("div", "safety-content");
-    elements.safetyContent.id = "safety-content";
-    elements.safetyContent.append(
-      elements.stableIssuesSection,
-      elements.evidenceGapsSection,
-      elements.fixMonitoringSection,
-      analysisDisclosure,
-      filterDisclosure,
-    );
-    elements.attentionScroll.replaceChildren(
-      elements.costIssuesSection,
-      elements.safetyContent,
-    );
-    setAttentionMode("issues");
-  }
-
-  function bindEvents() {
-    elements.updateNotice.addEventListener("click", openUpdateDialog);
-    elements.updateClose.addEventListener("click", () => {
-      closeUpdateDialog(true);
-    });
-    elements.updateCopyCommand.addEventListener("click", () => {
-      void copyText(updateInstallCommand, elements.updateCopyCommand);
-    });
-    elements.updateRemind.addEventListener("click", () => {
-      void submitUpdateAction("remind");
-    });
-    elements.updateSkip.addEventListener("click", () => {
-      void submitUpdateAction("dismiss");
-    });
-    elements.updateModalLayer.addEventListener("keydown", handleModalKeydown);
-    elements.attentionFilters.addEventListener("submit", (event) => {
-      event.preventDefault();
-      state.issueFilters.harness = elements.issueFilterHarness.value.trim();
-      resetAndLoadAttention();
-    });
-    elements.navBrief.addEventListener("click", () => {
-      setActiveView("brief", true);
-      if (state.briefStatus === "idle") void loadDeveloperBrief();
-    });
-    elements.navAttention.addEventListener("click", () => {
-      setActiveView("attention", true);
-      if (state.costIssueStatus === "idle") void loadCostIssues();
-    });
-    elements.navSessions.addEventListener("click", () => {
-      setActiveView("sessions", true);
-      if (!state.sessions.length) refreshSessions(false);
-    });
-    elements.sessionTabSummary.addEventListener("click", () => {
-      setSessionTab("summary");
-    });
-    elements.sessionTabTimeline.addEventListener("click", () => {
-      setSessionTab("timeline");
-    });
-    elements.navHabits.addEventListener("click", () => {
-      setActiveView("habits", true);
-      if (state.habitsStatus === "idle") void loadUserInsights();
-    });
-    elements.habitsRetry.addEventListener("click", () => {
-      void loadUserInsights();
-    });
-    elements.habitsDebriefAll.addEventListener("click", () => {
-      void generateAllHabitsDebriefs();
-    });
-    elements.reportHabitsOpen.addEventListener("click", () => {
-      setActiveView("habits", true);
-      if (state.habitsStatus === "idle") void loadUserInsights();
-    });
-    elements.briefRetry.addEventListener("click", () => {
-      void loadDeveloperBrief();
-    });
-    elements.briefOpenAttention.addEventListener("click", () => {
-      setActiveView("attention", true);
-      if (state.costIssueStatus === "idle") void loadCostIssues();
-    });
-    elements.attentionModeIssues.addEventListener("click", () => {
-      setAttentionMode("issues");
-      if (state.costIssueStatus === "idle") void loadCostIssues();
-    });
-    elements.attentionModeSafety.addEventListener("click", () => {
-      setAttentionMode("safety");
-      if (state.issues.status === "idle") void refreshAttention(false);
-    });
-    elements.costIssuesRetry.addEventListener("click", () => {
-      void loadCostIssues();
-    });
-    elements.briefOpenSessions.addEventListener("click", () => {
-      setActiveView("sessions", true);
-      if (!state.sessions.length) void refreshSessions(false);
-    });
-    elements.missionPackClose.addEventListener("click", () => {
-      closeMissionPackDrawer(true);
-    });
-    elements.missionPackDone.addEventListener("click", () => {
-      closeMissionPackDrawer(true);
-    });
-    elements.missionPackRetry.addEventListener("click", () => {
-      const issueID = readText(
-        state.missionPackIssue && state.missionPackIssue.issue_id,
-      );
-      if (!issueID) return;
-      resetMissionPackDrawer();
-      void loadMissionPack(issueID);
-    });
-    elements.missionPackCopyClaude.addEventListener("click", () => {
-      const issueID = readText(
-        state.missionPackIssue && state.missionPackIssue.issue_id,
-      );
-      void copyText(
-        agentIssueCommand("claude", issueID),
-        elements.missionPackCopyClaude,
-      );
-    });
-    elements.missionPackCopyCodex.addEventListener("click", () => {
-      const issueID = readText(
-        state.missionPackIssue && state.missionPackIssue.issue_id,
-      );
-      void copyText(
-        agentIssueCommand("codex", issueID),
-        elements.missionPackCopyCodex,
-      );
-    });
-    elements.missionPackShowEvidence.addEventListener("click", () => {
-      const issue = state.missionPackIssue;
-      if (!issue) return;
-      closeMissionPackDrawer(false);
-      openReportEvidenceDrawer(issue);
-    });
-    elements.missionPackModalLayer.addEventListener(
-      "keydown",
-      handleModalKeydown,
-    );
-    elements.reportEvidenceClose.addEventListener("click", () => {
-      closeReportEvidenceDrawer(true);
-    });
-    elements.reportEvidenceDone.addEventListener("click", () => {
-      closeReportEvidenceDrawer(true);
-    });
-    elements.reportEvidenceCopyClaude.addEventListener("click", () => {
-      const issueID = state.reportEvidenceIssueID;
-      void copyText(
-        agentIssueCommand("claude", issueID),
-        elements.reportEvidenceCopyClaude,
-      );
-    });
-    elements.reportEvidenceCopyCodex.addEventListener("click", () => {
-      const issueID = state.reportEvidenceIssueID;
-      void copyText(
-        agentIssueCommand("codex", issueID),
-        elements.reportEvidenceCopyCodex,
-      );
-    });
-    elements.reportEvidenceModalLayer.addEventListener(
-      "keydown",
-      handleModalKeydown,
-    );
-    elements.refreshButton.addEventListener("click", () => refreshAll(true));
-    elements.issuesLoadMore.addEventListener("click", () => {
-      loadIssueBucket(state.issues, true);
-    });
-    elements.familyMembersLoadMore.addEventListener("click", () => {
-      void loadAttentionFamilyDetail(true);
-    });
-    elements.evidenceGapsLoadMore.addEventListener("click", () => {
-      loadIssueBucket(state.evidenceGaps, true);
-    });
-    elements.fixMonitoringLoadMore.addEventListener("click", () => {
-      void loadFixMonitoring(true);
-    });
-    elements.fixMonitoringFilters.addEventListener("submit", (event) => {
-      event.preventDefault();
-      syncFixMonitoringFilters();
-      resetAndLoadFixMonitoring();
-    });
-    [
-      [elements.fixMonitoringFilterState, "state"],
-      [elements.fixMonitoringFilterChangeKind, "changeKind"],
-      [elements.fixMonitoringFilterSeverity, "severity"],
-    ].forEach(([element, key]) => {
-      element.addEventListener("change", () => {
-        state.fixMonitoringFilters[key] = element.value;
-        if (key === "state" && element.value === "retracted") {
-          state.fixMonitoringFilters.includeRetracted = true;
-          elements.fixMonitoringFilterRetracted.checked = true;
-        }
-        resetAndLoadFixMonitoring();
-      });
-    });
-    elements.fixMonitoringFilterRetracted.addEventListener("change", () => {
-      state.fixMonitoringFilters.includeRetracted =
-        elements.fixMonitoringFilterRetracted.checked;
-      resetAndLoadFixMonitoring();
-    });
-    [
-      elements.fixMonitoringFilterHarness,
-      elements.fixMonitoringFilterIssueID,
-      elements.fixMonitoringFilterRecordedAfter,
-    ].forEach((element) => {
-      element.addEventListener("change", () => {
-        syncFixMonitoringFilters();
-        resetAndLoadFixMonitoring();
-      });
-    });
-    elements.clearFixMonitoringFilters.addEventListener("click", () => {
-      state.fixMonitoringFilters = {
-        state: "",
-        changeKind: "",
-        severity: "",
-        harness: "",
-        issueID: "",
-        recordedAfter: "",
-        includeRetracted: false,
-      };
-      renderFixMonitoringFilters();
-      resetAndLoadFixMonitoring();
-    });
-    elements.occurrencesLoadMore.addEventListener("click", loadMoreOccurrences);
-    elements.issueEvidencePreviewAll.addEventListener("click", () => {
-      const preview = state.issueEvidencePreview;
-      const occurrence = state.occurrences.find(
-        (value) =>
-          readText(value.occurrence_id) === readText(preview.occurrenceID),
-      );
-      if (occurrence) void loadIssueEvidencePreview(occurrence, true);
-    });
-    elements.recordFixAttempt.addEventListener("click", openFixAttemptDialog);
-    elements.fixHistoryLoadMore.addEventListener(
-      "click",
-      loadMoreFixMonitoringDetail,
-    );
-    elements.issueBackButton.addEventListener("click", closeIssueDetail);
-    elements.familyBackButton.addEventListener("click", closeFamilyDetail);
-    elements.copyIssueFingerprint.addEventListener("click", () => {
-      copyText(
-        readText(state.selectedIssue && state.selectedIssue.fingerprint_id),
-        elements.copyIssueFingerprint,
-      );
-    });
-    elements.sessionsLoadMore.addEventListener("click", loadMoreSessions);
-    elements.eventsLoadMore.addEventListener("click", loadMoreEvents);
-    elements.findingsLoadMore.addEventListener("click", loadMoreFindings);
-    elements.backButton.addEventListener("click", closeTimeline);
-    elements.errorRetry.addEventListener("click", retryLastAction);
-    elements.copySelectedSession.addEventListener("click", () => {
-      copyText(state.selectedSessionID, elements.copySelectedSession);
-    });
-    elements.allEventsToggle.addEventListener("click", () => {
-      state.showAllEvents = !state.showAllEvents;
-      elements.allEventsToggle.setAttribute(
-        "aria-pressed",
-        String(state.showAllEvents),
-      );
-      elements.allEventsToggle.classList.toggle("is-active", state.showAllEvents);
-      renderEvents();
-    });
-    elements.fixAttemptClose.addEventListener("click", () => {
-      closeFixAttemptDialog(true);
-    });
-    elements.fixAttemptCancel.addEventListener("click", () => {
-      closeFixAttemptDialog(true);
-    });
-    elements.fixAttemptConfirm.addEventListener("click", () => {
-      void submitFixAttempt();
-    });
-    elements.abandonFixDraft.addEventListener("click", abandonFixDraft);
-    elements.fixCategoryOptions.addEventListener("change", (event) => {
-      updateFixDraftChoice(event.target);
-    });
-    elements.fixRetractionClose.addEventListener("click", () => {
-      closeFixRetractionDialog(true);
-    });
-    elements.fixRetractionCancel.addEventListener("click", () => {
-      closeFixRetractionDialog(true);
-    });
-    elements.fixRetractionConfirm.addEventListener("click", () => {
-      void submitFixRetraction();
-    });
-    elements.abandonFixRetraction.addEventListener(
-      "click",
-      abandonFixRetraction,
-    );
-    elements.fixRetractionOptions.addEventListener("change", (event) => {
-      updateFixRetractionChoice(event.target);
-    });
-    elements.fixAttemptModalLayer.addEventListener(
-      "keydown",
-      handleModalKeydown,
-    );
-    elements.fixRetractionModalLayer.addEventListener(
-      "keydown",
-      handleModalKeydown,
-    );
-
-    [
-      [elements.issueFilterSeverity, "severity"],
-      [elements.issueFilterOrigin, "origin"],
-      [elements.issueFilterStatus, "analysisStatus"],
-    ].forEach(([element, key]) => {
-      element.addEventListener("change", () => {
-        state.issueFilters[key] = element.value;
-        resetAndLoadAttention();
-      });
-    });
-    elements.issueFilterHarness.addEventListener("input", () => {
-      globalThis.clearTimeout(issueFilterTimer);
-      issueFilterTimer = globalThis.setTimeout(() => {
-        state.issueFilters.harness = elements.issueFilterHarness.value.trim();
-        resetAndLoadAttention();
-      }, 250);
-    });
-    elements.issueFilterExperimental.addEventListener("change", () => {
-      state.issueFilters.experimental =
-        elements.issueFilterExperimental.checked;
-      resetAndLoadAttention();
-    });
-    elements.clearAttentionFilters.addEventListener("click", () => {
-      state.issueFilters = {
-        severity: "",
-        harness: "",
-        origin: "",
-        analysisStatus: "",
-        experimental: false,
-      };
-      elements.issueFilterSeverity.value = "";
-      elements.issueFilterHarness.value = "";
-      elements.issueFilterOrigin.value = "";
-      elements.issueFilterStatus.value = "";
-      elements.issueFilterExperimental.checked = false;
-      resetAndLoadAttention();
-    });
-
-    elements.sessionSearch.addEventListener("input", (event) => {
-      state.filters.query = event.target.value.trim();
-      globalThis.clearTimeout(searchTimer);
-      searchTimer = globalThis.setTimeout(resetAndLoadSessions, 250);
-    });
-
-    [
-      [elements.filterHarness, "harness"],
-      [elements.filterCapture, "capture"],
-      [elements.filterOutcome, "outcome"],
-    ].forEach(([element, key]) => {
-      element.addEventListener("change", () => {
-        state.filters[key] = element.value;
-        resetAndLoadSessions();
-      });
-    });
-
-    elements.filterDate.addEventListener("change", () => {
-      state.filters.days = elements.filterDate.value;
-      state.sessionOccurredAfter = dateLowerBound(state.filters.days);
-      resetAndLoadSessions();
-    });
-
-    elements.clearFilters.addEventListener("click", () => {
-      state.filters = {
-        query: "",
-        harness: "",
-        capture: "",
-        outcome: "",
-        days: "",
-      };
-      state.sessionOccurredAfter = "";
-      elements.sessionSearch.value = "";
-      elements.filterHarness.value = "";
-      elements.filterCapture.value = "";
-      elements.filterOutcome.value = "";
-      elements.filterDate.value = "";
-      resetAndLoadSessions();
-    });
-
-    globalThis.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape") return;
-      if (state.activeModal) return;
-      if (state.activeView === "sessions" && state.selectedSessionID) {
-        closeTimeline();
-      } else if (state.activeView === "attention" && state.selectedIssueID) {
-        closeIssueDetail();
-      } else if (state.activeView === "attention" && state.selectedFamily) {
-        closeFamilyDetail();
-      }
-    });
-    const handleMobileChange = () => applyPaneAccessibility();
-    if (typeof mobileQuery.addEventListener === "function") {
-      mobileQuery.addEventListener("change", handleMobileChange);
-    } else if (typeof mobileQuery.addListener === "function") {
-      mobileQuery.addListener(handleMobileChange);
-    }
-  }
-
-  async function refreshAll(preserveSelection) {
-    hideError();
-    elements.refreshButton.disabled = true;
-    try {
-      if (state.activeView === "brief") {
-        await loadDeveloperBrief();
-        return;
-      }
-      if (state.activeView === "habits") {
-        await loadUserInsights();
-        return;
-      }
-      if (state.activeView === "attention") {
-        if (state.attentionMode === "safety") {
-          await refreshAttention(preserveSelection);
-        } else {
-          await loadCostIssues();
-        }
-        return;
-      }
-      await refreshSessions(preserveSelection);
-    } finally {
-      elements.refreshButton.disabled = false;
-    }
-  }
-
-  function setAttentionMode(mode) {
-    const selected = mode === "safety" ? "safety" : "issues";
-    state.attentionMode = selected;
-    const issuesActive = selected === "issues";
-    elements.attentionModeIssues.setAttribute(
-      "aria-selected",
-      issuesActive ? "true" : "false",
-    );
-    elements.attentionModeSafety.setAttribute(
-      "aria-selected",
-      issuesActive ? "false" : "true",
-    );
-    elements.costIssuesSection.hidden = !issuesActive;
-    if (elements.safetyContent) {
-      elements.safetyContent.hidden = issuesActive;
-    }
-    elements.attentionDetailPane.hidden = issuesActive;
-    elements.attentionView.classList.toggle("cost-mode", issuesActive);
-    renderAttentionTotals();
-  }
-
-  async function loadCostIssues() {
-    const generation = ++state.costIssueRequestGeneration;
-    state.costIssueStatus = "loading";
-    state.costIssueError = "";
-    renderCostIssues();
-    try {
-      const response = await apiGet("/v1/cost-issues?limit=5");
-      if (generation !== state.costIssueRequestGeneration) return false;
-      if (
-        !isRecord(response) ||
-        readText(response.schema_version) !== "belay.cost-issues.v1" ||
-        !Array.isArray(response.data)
-      ) {
-        throw new Error("Local API returned invalid cost-ranked issues.");
-      }
-      state.costIssues = response.data
-        .slice(0, 5)
-        .map(requireCostIssue);
-      state.costIssueStatus = "ready";
-      renderCostIssues();
-      return true;
-    } catch (error) {
-      if (generation !== state.costIssueRequestGeneration) return false;
-      state.costIssueStatus = "error";
-      state.costIssueError =
-        error instanceof Error ? error.message : "Cost issue read failed.";
-      renderCostIssues();
-      return false;
-    }
-  }
-
-  function requireCostIssue(issue) {
-    if (
-      !isRecord(issue) ||
-      !readText(issue.issue_id) ||
-      !readText(issue.detector_id) ||
-      !readText(issue.headline) ||
-      !isRecord(issue.cost) ||
-      !Array.isArray(issue.sessions) ||
-      !Array.isArray(issue.trend) ||
-      !Array.isArray(issue.excerpts) ||
-      !isRecord(issue.evidence_basis) ||
-      !readText(issue.evidence_basis.kind) ||
-      !readText(issue.evidence_basis.summary) ||
-      !isRecord(issue.project) ||
-      !isRecord(issue.suggested_fix)
-    ) {
-      throw new Error("Local API returned an invalid cost issue.");
-    }
-    return issue;
-  }
-
-  function renderCostIssues() {
-    const loading = state.costIssueStatus === "loading";
-    const failed = state.costIssueStatus === "error";
-    const empty =
-      state.costIssueStatus === "ready" && state.costIssues.length === 0;
-    elements.costIssuesLoading.hidden = !loading;
-    elements.costIssuesError.hidden = !failed;
-    elements.costIssuesEmpty.hidden = !empty;
-    elements.costIssueList.hidden = loading || failed || empty;
-    elements.costIssueCount.textContent =
-      state.costIssueStatus === "ready"
-        ? String(state.costIssues.length)
-        : "—";
-    if (loading || failed || empty) {
-      elements.costIssueList.replaceChildren();
-      renderAttentionTotals();
-      return;
-    }
-    const fragment = document.createDocumentFragment();
-    state.costIssues.forEach((issue, index) => {
-      fragment.append(createCostIssueCard(issue, index));
-    });
-    elements.costIssueList.replaceChildren(fragment);
-    renderAttentionTotals();
-  }
-
-  function createCostIssueCard(issue, index) {
-    const card = createElement("article", "cost-issue-card");
-    const header = createElement("header", "cost-issue-card-header");
-    const heading = createElement("div");
-    heading.append(
-      createElement(
-        "p",
-        "eyebrow",
-        `${projectDisplayName(issue.project)} · ${readableLabel(issue.detector_id)}`,
-      ),
-      createElement("h3", "", readText(issue.headline)),
-    );
-    header.append(
-      heading,
-      createElement("span", "cost-issue-rank", `#${index + 1}`),
-    );
-    card.append(header);
-
-    const metrics = createElement("dl", "cost-issue-metrics");
-    appendCostMetric(
-      metrics,
-      "Attributed cost",
-      formatIssueDollarCost(issue.cost),
-    );
-    appendCostMetric(
-      metrics,
-      "Time",
-      formatIssueMinutes(issue.cost),
-    );
-    appendCostMetric(
-      metrics,
-      "Tokens",
-      formatNumber(issue.cost.wasted_tokens),
-    );
-    const sessions = Math.max(
-      toFiniteNumber(issue.session_count),
-      issue.sessions.length,
-    );
-    appendCostMetric(
-      metrics,
-      "Sessions",
-      `${formatNumber(sessions)} ${sessions === 1 ? "session" : "sessions"}`,
-    );
-    card.append(metrics);
-
-    if (issue.excerpts.length) {
-      card.append(createCostIssueExcerpt(issue.excerpts[0], true));
-    }
-    card.append(createIssueEvidenceBasis(issue));
-    const trend = issue.trend
-      .slice(-8)
-      .map((week) => formatNumber(week && week.count))
-      .join(" · ");
-    if (trend) {
-      card.append(
-        createElement(
-          "p",
-          "cost-issue-trend",
-          `Weekly occurrences, oldest to newest: ${trend}`,
-        ),
-      );
-    }
-
-    const fix = createElement("section", "cost-issue-fix");
-    fix.append(
-      createElement("p", "eyebrow", "Suggested fix"),
-      createElement(
-        "h4",
-        "",
-        readText(issue.suggested_fix.target_file) || "Agent instructions",
-      ),
-      createElement(
-        "p",
-        "",
-        readText(issue.suggested_fix.rationale) ||
-          "Add a concrete project rule that prevents this pattern.",
-      ),
-    );
-    const fixActions = createElement("div", "cost-issue-fix-actions");
-    const prepareButton = createElement(
-      "button",
-      "secondary-button",
-      "Prepare fix",
-    );
-    prepareButton.type = "button";
-    const fixStatus = createElement("p", "cost-issue-fix-status");
-    fixStatus.setAttribute("aria-live", "polite");
-    const diff = createElement("pre", "cost-issue-fix-diff");
-    diff.hidden = true;
-    prepareButton.addEventListener("click", async () => {
-      const issueID = readText(issue.issue_id);
-      const kind = readText(issue.suggested_fix.kind);
-      const targetFile = readText(issue.suggested_fix.target_file);
-      const idempotencyKey = createUUIDv4();
-      if (!issueID || !kind || !targetFile || !idempotencyKey) {
-        fixStatus.textContent = "This fix could not be prepared.";
-        return;
-      }
-      prepareButton.disabled = true;
-      prepareButton.textContent = "Preparing…";
-      fixStatus.textContent = "";
-      try {
-        const response = await apiMutation(
-          `/v1/cost-issues/${encodeURIComponent(issueID)}/fixes`,
-          { kind, target_file: targetFile },
-          idempotencyKey,
-          "propose-cost-issue-fix.v1",
-        );
-        if (
-          readText(response && response.schema_version) !==
-            "belay.cost-issue-fix.v1" ||
-          !isRecord(response && response.data) ||
-          !readText(response.data.fix_id) ||
-          !readText(response.data.unified_diff)
-        ) {
-          throw new Error("Local API returned an invalid fix proposal.");
-        }
-        diff.textContent = readText(response.data.unified_diff);
-        diff.hidden = false;
-        fixStatus.textContent =
-          "Proposal ready. Review the diff, then apply it with /belay in Claude Code or $belay in Codex.";
-        prepareButton.textContent = "Prepared";
-      } catch (error) {
-        fixStatus.textContent =
-          error instanceof Error
-            ? error.message
-            : "This fix could not be prepared.";
-        prepareButton.disabled = false;
-        prepareButton.textContent = "Try preparing again";
-      }
-    });
-    fixActions.append(prepareButton);
-    fix.append(fixActions, fixStatus, diff);
-    card.append(fix);
-
-    const evidence = createElement("details", "cost-issue-evidence");
-    evidence.append(
-      createElement(
-        "summary",
-        "",
-        `Show evidence (${formatNumber(issue.excerpts.length)})`,
-      ),
-    );
-    const evidenceList = createElement("div", "cost-issue-evidence-list");
-    issue.excerpts.forEach((excerpt) => {
-      evidenceList.append(createCostIssueExcerpt(excerpt, false));
-    });
-    evidence.append(evidenceList);
-    card.append(evidence);
-    return card;
-  }
-
-  function createIssueEvidenceBasis(issue) {
-    const basis = isRecord(issue && issue.evidence_basis)
-      ? issue.evidence_basis
-      : {};
-    const summary =
-      readText(basis.summary) ||
-      "Detected from retained session activity.";
-    return createElement(
-      "p",
-      "issue-evidence-basis",
-      `Why Belay flagged this · ${summary}`,
-    );
-  }
-
-  function appendCostMetric(list, label, value) {
-    const item = createElement("div");
-    item.append(
-      createElement("dt", "", label),
-      createElement("dd", "", value),
-    );
-    list.append(item);
-  }
-
-  function createCostIssueExcerpt(excerpt, preview) {
-    const wrapper = createElement(
-      "div",
-      preview ? "cost-issue-excerpt preview" : "cost-issue-excerpt",
-    );
-    const citation = isRecord(excerpt && excerpt.citation)
-      ? excerpt.citation
-      : {};
-    const role = readableLabel(excerpt && excerpt.role, "Transcript");
-    const tool = readText(excerpt && excerpt.tool_name);
-    const session = compactID(citation.session_key);
-    const turn = Number.isFinite(Number(citation.turn_index))
-      ? `turn ${formatNumber(citation.turn_index)}`
-      : "turn unavailable";
-    wrapper.append(
-      createElement(
-        "p",
-        "cost-issue-citation",
-        [role, tool, session, turn].filter(Boolean).join(" · "),
-      ),
-      createElement(
-        "blockquote",
-        "",
-        readText(excerpt && excerpt.text) || "Excerpt unavailable",
-      ),
-    );
-    return wrapper;
-  }
-
-  function formatIssueDollarCost(cost) {
-    const value = cost && cost.wasted_usd;
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      return cost && cost.lower_bound
-        ? "At least the known token cost"
-        : "Unknown model price";
-    }
-    const formatted = new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(Math.max(0, value));
-    return cost.lower_bound ? `At least ${formatted}` : formatted;
-  }
-
-  function formatIssueMinutes(cost) {
-    const minutes = Math.max(0, toFiniteNumber(cost && cost.wasted_minutes));
-    const formatted =
-      minutes >= 10 ? formatNumber(Math.round(minutes)) : minutes.toFixed(1);
-    return `${cost && cost.lower_bound ? "At least " : ""}${formatted} active min`;
-  }
-
-  function formatIssueTokens(cost) {
-    const tokens = Math.max(0, toFiniteNumber(cost && cost.wasted_tokens));
-    return `${cost && cost.lower_bound ? "At least " : ""}${formatNumber(tokens)} tokens`;
-  }
-
-  function projectDisplayName(project) {
-    const identity = readText(project && project.identity);
-    const path = readText(project && project.path);
-    const localIdentity = /^(?:\/|[A-Za-z]:[\\/])/.test(identity);
-    const candidate =
-      localIdentity && path && path !== identity ? path : identity || path;
-    if (!candidate) return "Project unavailable";
-    const parts = candidate.split(/[/:\\]/).filter(Boolean);
-    return (parts[parts.length - 1] || candidate).replace(/\.git$/i, "");
-  }
-
-  async function refreshSessions(preserveSelection) {
-    const selectedID = preserveSelection ? state.selectedSessionID : "";
-    state.sessionLimit = pageLimits.sessions.initial;
-    state.sessionNextCursor = "";
-    const [, sessionsResult] = await Promise.allSettled([
-      loadStats(),
-      loadSessions(false),
-    ]);
-    const sessionsReady =
-      sessionsResult.status === "fulfilled" && sessionsResult.value === true;
-    if (!sessionsReady) return false;
-    if (
-      selectedID &&
-      state.sessions.some((session) => readText(session.session_id) === selectedID)
-    ) {
-      openSession(selectedID, state.selectedSessionDetail);
-    }
-    return true;
-  }
-
-  function setActiveView(view, moveFocus) {
-    const next = ["brief", "attention", "sessions", "habits"].includes(view)
-      ? view
-      : "brief";
-    if (next !== "attention" && state.activeView === "attention") {
-      state.attentionRefreshGeneration += 1;
-    }
-    if (next !== "sessions" && state.activeView === "sessions") {
-      state.directSessionRequestGeneration += 1;
-    }
-    state.activeView = next;
-    const briefActive = next === "brief";
-    const attentionActive = next === "attention";
-    const sessionsActive = next === "sessions";
-    const habitsActive = next === "habits";
-    setViewVisibility(elements.briefView, briefActive);
-    setViewVisibility(elements.attentionView, attentionActive);
-    setViewVisibility(elements.sessionsView, sessionsActive);
-    setViewVisibility(elements.habitsView, habitsActive);
-    setCurrentNavigation(elements.navBrief, briefActive);
-    setCurrentNavigation(elements.navAttention, attentionActive);
-    setCurrentNavigation(elements.navSessions, sessionsActive);
-    setCurrentNavigation(elements.navHabits, habitsActive);
-    applyPaneAccessibility();
-    if (moveFocus) {
-      focusCurrentElement(
-        briefActive
-          ? elements.navBrief
-          : attentionActive
-            ? elements.navAttention
-            : sessionsActive
-              ? elements.navSessions
-              : elements.navHabits,
-      );
-    }
-  }
-
-  function setViewVisibility(element, visible) {
-    element.hidden = !visible;
-    element.inert = !visible;
-    if (visible) {
-      element.removeAttribute("aria-hidden");
-    } else {
-      element.setAttribute("aria-hidden", "true");
-    }
-  }
-
-  function setCurrentNavigation(button, current) {
-    if (current) {
-      button.setAttribute("aria-current", "page");
-    } else {
-      button.removeAttribute("aria-current");
-    }
-  }
-
-  function applyPaneAccessibility() {
-    const mobile = mobileQuery.matches;
-    const issueOpen = Boolean(state.selectedIssueID || state.selectedFamily);
-    const sessionOpen = Boolean(state.selectedSessionID);
-    setObscuredPane(
-      elements.attentionListPane,
-      state.activeView === "attention" && mobile && issueOpen,
-    );
-    setObscuredPane(
-      elements.attentionDetailPane,
-      state.activeView === "attention" && mobile && !issueOpen,
-    );
-    setObscuredPane(
-      elements.sessionPanel,
-      state.activeView === "sessions" && mobile && sessionOpen,
-    );
-    setObscuredPane(
-      elements.timelinePanel,
-      state.activeView === "sessions" && mobile && !sessionOpen,
-    );
-  }
-
-  function setObscuredPane(element, obscured) {
-    element.inert = obscured;
-    if (obscured) {
-      element.setAttribute("aria-hidden", "true");
-    } else {
-      element.removeAttribute("aria-hidden");
-    }
-  }
-
-  function issueFocusKey(kind, issueID) {
-    return `${kind === "evidence_gap" ? "evidence_gap" : "issue"}\u0000${issueID}`;
-  }
-
-  function familyFocusKey(familyID) {
-    return readText(familyID);
-  }
-
-  function familyMemberFocusKey(familyID, issueID) {
-    return `${readText(familyID)}\u0000${readText(issueID)}`;
-  }
-
-  function occurrenceFocusKey(issueID, occurrence) {
-    const occurrenceID = readText(occurrence && occurrence.occurrence_id);
-    const sessionID = readText(occurrence && occurrence.session_id);
-    return `${issueID}\u0000${occurrenceID || sessionID}`;
-  }
-
-  function clearIssueFocusRegistry(kind) {
-    const prefix = `${kind === "evidence_gap" ? "evidence_gap" : "issue"}\u0000`;
-    Array.from(focusRegistry.issueCards.keys()).forEach((key) => {
-      if (key.startsWith(prefix)) focusRegistry.issueCards.delete(key);
-    });
-  }
-
-  function resolveFocusReference(reference) {
-    if (!reference) return null;
-    if (reference.type === "mission-pack") {
-      return focusRegistry.missionPackTriggers.get(reference.issueID) || null;
-    }
-    if (reference.type === "report-evidence") {
-      return (
-        focusRegistry.reportEvidenceTriggers.get(reference.issueID) || null
-      );
-    }
-    if (reference.type === "brief-action") {
-      return focusRegistry.briefActions.get(reference.key) || null;
-    }
-    if (reference.type === "brief-session") {
-      return focusRegistry.briefSessions.get(reference.key) || null;
-    }
-    if (reference.type === "diagnosis-action") {
-      return focusRegistry.diagnosisActions.get(reference.key) || null;
-    }
-    if (reference.type === "monitoring") {
-      return focusRegistry.monitoringCards.get(reference.key) || null;
-    }
-    if (reference.type === "issue") {
-      return focusRegistry.issueCards.get(reference.key) || null;
-    }
-    if (reference.type === "family") {
-      return focusRegistry.familyCards.get(reference.familyID) || null;
-    }
-    if (reference.type === "family-member") {
-      return focusRegistry.familyMembers.get(reference.key) || null;
-    }
-    if (reference.type === "occurrence") {
-      return focusRegistry.occurrenceActions.get(reference.key) || null;
-    }
-    if (reference.type === "session") {
-      return focusRegistry.sessionCards.get(reference.sessionID) || null;
-    }
-    if (reference.type === "fix-trigger") {
-      return focusRegistry.fixTriggers.get(reference.issueID) || null;
-    }
-    if (reference.type === "fix-history") {
-      return focusRegistry.fixHistoryRows.get(reference.annotationID) || null;
-    }
-    if (reference.type === "fix-observation") {
-      return (
-        focusRegistry.fixObservationRows.get(reference.recurrenceID) || null
-      );
-    }
-    if (reference.type === "fix-retraction") {
-      return (
-        focusRegistry.fixRetractionTriggers.get(reference.annotationID) || null
-      );
-    }
-    return null;
-  }
-
-  function canReceiveFocus(element) {
-    if (
-      !element ||
-      !element.isConnected ||
-      typeof element.focus !== "function" ||
-      element.closest("[hidden]") ||
-      element.closest('[aria-hidden="true"]')
-    ) {
-      return false;
-    }
-    let current = element;
-    while (current) {
-      if (current.inert === true) return false;
-      current = current.parentElement;
-    }
-    return true;
-  }
-
-  function focusCurrentElement(element) {
-    if (!canReceiveFocus(element)) return false;
-    element.focus();
-    return true;
-  }
-
-  function restoreLogicalFocus(reference, fallback) {
-    return (
-      focusCurrentElement(resolveFocusReference(reference)) ||
-      focusCurrentElement(fallback)
-    );
-  }
-
-  async function refreshAttention(preserveSelection, suppressFailureNotice = false) {
-    const refreshGeneration = ++state.attentionRefreshGeneration;
-    const selectedID = preserveSelection ? state.selectedIssueID : "";
-    const selectedKind = preserveSelection ? state.selectedIssueKind : "";
-    const selectedSource = preserveSelection ? state.selectedIssueSource : "";
-    const selectedFamilyID =
-      preserveSelection && state.selectedFamily
-        ? readText(state.selectedFamily.family_id)
-        : preserveSelection
-          ? readText(state.selectedIssueFamilyID)
-          : "";
-    const selectedFamilyMemberPageBudget = Math.max(
-      1,
-      Math.ceil(
-        state.familyMembers.length / pageLimits.familyMembers.page,
-      ),
-    );
-    const selectedBucket =
-      selectedKind === "evidence_gap" ? state.evidenceGaps : state.issues;
-    const selectedPageBudget = Math.max(
-      1,
-      Math.ceil(selectedBucket.data.length / pageLimits.issues.page),
-    );
-    if (
-      (selectedID || selectedFamilyID) &&
-      selectedSource !== "monitoring"
-    ) {
-      closeIssueDetail(false, true);
-      clearAttentionFamilyDetailState();
-      showAttentionNotice(
-        "Refreshing Attention; selected detail is hidden until current data confirms it.",
-        "pending",
-      );
-    } else if (!preserveSelection) {
-      closeIssueDetail(false, true);
-      clearAttentionFamilyDetailState();
-    }
-    resetIssueBucket(state.issues);
-    resetIssueBucket(state.evidenceGaps);
-    resetFixMonitoringBucket();
-    const [issuesReady, gapsReady, monitoringReady] = await Promise.all([
-      loadIssueBucket(state.issues, false),
-      loadIssueBucket(state.evidenceGaps, false),
-      loadFixMonitoring(false),
-    ]);
-    if (refreshGeneration !== state.attentionRefreshGeneration) return false;
-    if (selectedID && selectedSource === "monitoring") {
-      if (!monitoringReady) {
-        state.fixHistoryStale = true;
-        state.fixHistoryError =
-          "Monitoring refresh failed. Previously loaded attempt detail may be stale.";
-        renderFixAttempts();
-        return false;
-      }
-      const summary = state.fixMonitoring.data.find(
-        (entry) => readText(entry.issue_id) === selectedID,
-      );
-      if (!summary) {
-        closeIssueDetail(false);
-        showAttentionNotice(
-          state.fixMonitoring.hasMore
-            ? "Follow-up evidence refreshed. The selected item is outside the loaded results."
-            : "Follow-up evidence refreshed. The selected item is no longer visible under the current filters.",
-          "status",
-          7000,
-        );
-        return issuesReady && gapsReady;
-      }
-      const detailReady = await refreshSelectedMonitoringIssue(summary);
-      if (refreshGeneration !== state.attentionRefreshGeneration) return false;
-      if (!detailReady) {
-        state.fixHistoryStale = true;
-        state.fixHistoryError =
-          "Monitoring list refreshed, but attempt detail could not be refreshed.";
-        renderFixAttempts();
-        return false;
-      }
-      showAttentionNotice(
-        "Attention refreshed; follow-up evidence was reloaded from the current view.",
-        "success",
-        4000,
-      );
-      return issuesReady && gapsReady;
-    }
-    if (!issuesReady || !gapsReady) {
-      if (!suppressFailureNotice && !state.attentionExpiryRefresh) {
-        showAttentionNotice(
-          selectedID
-            ? "Attention refresh failed. Selected detail remains closed to avoid showing stale data."
-            : "Attention refresh failed. The issue lists may be incomplete; retry before relying on them.",
-          "error",
-        );
-      }
-      return false;
-    }
-    if (!selectedID && !selectedFamilyID) return true;
-
-    if (selectedKind === "evidence_gap") {
-      const chainReady = await loadIssuePagesForSelection(
-        state.evidenceGaps,
-        selectedID,
-        selectedPageBudget,
-      );
-      if (!chainReady) return false;
-      const summary = state.evidenceGaps.data.find(
-        (issue) => readText(issue.issue_id) === selectedID,
-      );
-      return summary ? selectIssue(summary, selectedKind, false) : true;
-    }
-
-    const chainReady = await loadFamilyPagesForSelection(
-      selectedFamilyID,
-      selectedID,
-      selectedPageBudget,
-    );
-    if (refreshGeneration !== state.attentionRefreshGeneration) return false;
-    if (!chainReady) {
-      if (!suppressFailureNotice && !state.attentionExpiryRefresh) {
-        showAttentionNotice(
-          "Attention refresh failed while confirming the selected finding. Its detail remains closed.",
-          "error",
-        );
-      }
-      return false;
-    }
-    const summary = state.issues.data.find(
-      (family) =>
-        (selectedFamilyID &&
-          readText(family.family_id) === selectedFamilyID) ||
-        (!selectedFamilyID &&
-          readText(family.kind) === "exact_issue" &&
-          readText(family.representative_issue_id) === selectedID),
-    );
-    if (!summary) {
-      showAttentionNotice(
-        state.issues.hasMore
-          ? "Attention refreshed. The selected finding was not confirmed in the refreshed loaded results; load more to find it."
-          : "Attention refreshed. The selected finding is no longer visible under the current filters.",
-        "status",
-        7000,
-      );
-      return true;
-    }
-    let detailReady = false;
-    if (readText(summary.kind) === "mapped_upstream") {
-      detailReady = await selectAttentionFamily(summary, false);
-      if (detailReady && selectedID) {
-        const memberChainReady = await loadFamilyMemberPagesForSelection(
-          selectedID,
-          selectedFamilyMemberPageBudget,
-        );
-        if (!memberChainReady) {
-          closeFamilyDetail(false);
-          detailReady = false;
-        }
-        const member = state.familyMembers.find(
-          (value) => readText(value.issue && value.issue.issue_id) === selectedID,
-        );
-        if (memberChainReady && !member) {
-          const moreMembersRemain = state.familyMemberHasMore;
-          closeFamilyDetail(false);
-          showAttentionNotice(
-            moreMembersRemain
-              ? "Attention refreshed, but the selected item was not found in the sessions currently loaded. Reopen the finding and load more sessions to select it again."
-              : "Attention refreshed, but the selected finding is no longer visible in this group.",
-            "status",
-            8000,
-          );
-          return true;
-        }
-        if (memberChainReady && member) {
-          const returnToFamily =
-            selectedSource === "family" &&
-            toFiniteNumber(summary.supporting_issue_count) > 1;
-          const returnFocus = returnToFamily
-            ? {
-                type: "family-member",
-                key: familyMemberFocusKey(
-                  readText(summary.family_id),
-                  selectedID,
+                    ].join(" · "),
                 ),
-              }
-            : {
-                type: "family",
-                familyID: readText(summary.family_id),
-              };
-          if (!returnToFamily) closeFamilyDetail(false);
-          detailReady = await selectIssue(member.issue, "issue", false, {
-            viewCursor: readCursor(member.view_cursor),
-            catalog: member.catalog,
-            source: returnToFamily ? "family" : "attention",
-            familyID: readText(summary.family_id),
-            evidenceContext: attentionFamilyEvidenceContext(summary),
-            returnFocus,
-          });
+                createBriefSummaryRow(
+                    "Collection", [
+                        `${formatNumber(history.live)} live`,
+                        `${formatNumber(history.historical)} imported`,
+                        `${formatNumber(history.mixed)} mixed`,
+                    ].join(" · "),
+                ),
+            );
+            container.replaceChildren(fragment);
         }
-      }
-    } else {
-      detailReady = await selectIssue(
-        exactFamilyRepresentative(summary),
-        "issue",
-        false,
-        {
-          viewCursor: readCursor(summary.view_cursor),
-          catalog: summary.catalog,
-          familyID: readText(summary.family_id),
-          evidenceContext: attentionFamilyEvidenceContext(summary),
-          returnFocus: {
-            type: "family",
-            familyID: readText(summary.family_id),
-          },
-        },
-      );
-    }
-    if (refreshGeneration !== state.attentionRefreshGeneration) return false;
-    if (!detailReady) {
-      closeIssueDetail(false);
-      if (!suppressFailureNotice && !state.attentionExpiryRefresh) {
-        showAttentionNotice(
-          "Attention lists refreshed, but the selected detail could not be reloaded and remains closed.",
-          "error",
-        );
-      }
-      return false;
-    }
-    showAttentionNotice(
-      "Attention refreshed; selected detail was reloaded from the current view.",
-      "success",
-      4000,
-    );
-    return true;
-  }
 
-  async function loadIssuePagesForSelection(bucket, issueID, pageBudget) {
-    for (let page = 1; page < pageBudget; page += 1) {
-      if (
-        bucket.data.some((issue) => readText(issue.issue_id) === issueID) ||
-        !bucket.hasMore
-      ) {
-        break;
-      }
-      const pageReady = await loadIssueBucket(bucket, true);
-      if (!pageReady) return false;
-    }
-    return true;
-  }
-
-  async function loadFamilyPagesForSelection(familyID, issueID, pageBudget) {
-    for (let page = 1; page < pageBudget; page += 1) {
-      if (
-        state.issues.data.some(
-          (family) =>
-            (familyID && readText(family.family_id) === familyID) ||
-            (!familyID &&
-              readText(family.kind) === "exact_issue" &&
-              readText(family.representative_issue_id) === issueID),
-        ) ||
-        !state.issues.hasMore
-      ) {
-        break;
-      }
-      const pageReady = await loadIssueBucket(state.issues, true);
-      if (!pageReady) return false;
-    }
-    return true;
-  }
-
-  async function loadFamilyMemberPagesForSelection(issueID, pageBudget) {
-    for (let page = 1; page < pageBudget; page += 1) {
-      if (
-        state.familyMembers.some(
-          (member) =>
-            readText(member.issue && member.issue.issue_id) === issueID,
-        ) ||
-        !state.familyMemberHasMore
-      ) {
-        break;
-      }
-      const pageReady = await loadAttentionFamilyDetail(true);
-      if (!pageReady) return false;
-    }
-    return true;
-  }
-
-  function resetAndLoadAttention() {
-    state.attentionRefreshGeneration += 1;
-    closeIssueDetail(false, true);
-    clearAttentionFamilyDetailState();
-    hideAttentionNotice();
-    resetIssueBucket(state.issues);
-    resetIssueBucket(state.evidenceGaps);
-    resetFixMonitoringBucket();
-    renderAttentionFilters();
-    void Promise.all([
-      loadIssueBucket(state.issues, false),
-      loadIssueBucket(state.evidenceGaps, false),
-      loadFixMonitoring(false),
-    ]);
-  }
-
-  function resetIssueBucket(bucket) {
-    bucket.requestGeneration += 1;
-    bucket.data = [];
-    bucket.nextCursor = "";
-    bucket.hasMore = false;
-    bucket.viewCursor = "";
-    bucket.analysis = null;
-    bucket.selection = null;
-    bucket.status = "idle";
-    bucket.error = null;
-  }
-
-  function resetFixMonitoringBucket(render = true) {
-    state.fixMonitoring.requestGeneration += 1;
-    state.fixMonitoring.data = [];
-    state.fixMonitoring.nextCursor = "";
-    state.fixMonitoring.hasMore = false;
-    state.fixMonitoring.viewCursor = "";
-    state.fixMonitoring.evidenceEvaluatedAt = "";
-    state.fixMonitoring.status = "idle";
-    state.fixMonitoring.error = null;
-    focusRegistry.monitoringCards.clear();
-    if (render) renderFixMonitoring();
-  }
-
-  function syncFixMonitoringFilters() {
-    state.fixMonitoringFilters.harness =
-      elements.fixMonitoringFilterHarness.value.trim();
-    state.fixMonitoringFilters.issueID =
-      elements.fixMonitoringFilterIssueID.value.trim();
-    const recordedAfter = elements.fixMonitoringFilterRecordedAfter.value;
-    if (!recordedAfter) {
-      state.fixMonitoringFilters.recordedAfter = "";
-      return;
-    }
-    const date = new Date(recordedAfter);
-    state.fixMonitoringFilters.recordedAfter = Number.isFinite(date.getTime())
-      ? date.toISOString()
-      : "";
-  }
-
-  function renderFixMonitoringFilters() {
-    const filters = state.fixMonitoringFilters;
-    elements.fixMonitoringFilterState.value = filters.state;
-    elements.fixMonitoringFilterChangeKind.value = filters.changeKind;
-    elements.fixMonitoringFilterSeverity.value = filters.severity;
-    elements.fixMonitoringFilterHarness.value = filters.harness;
-    elements.fixMonitoringFilterIssueID.value = filters.issueID;
-    elements.fixMonitoringFilterRetracted.checked = filters.includeRetracted;
-    if (!filters.recordedAfter) {
-      elements.fixMonitoringFilterRecordedAfter.value = "";
-    }
-    elements.fixMonitoringFilterNote.textContent = filters.includeRetracted
-      ? "Including all-retracted history."
-      : "Showing active attempts.";
-  }
-
-  function resetAndLoadFixMonitoring() {
-    if (state.selectedIssueSource === "monitoring") {
-      closeIssueDetail(false);
-      showAttentionNotice(
-        "Follow-up evidence filters changed. The prior detail was closed until a current result is selected.",
-        "status",
-        5000,
-      );
-    }
-    resetFixMonitoringBucket();
-    renderFixMonitoringFilters();
-    void loadFixMonitoring(false);
-  }
-
-  function buildFixMonitoringPath(cursor) {
-    const parameters = new URLSearchParams();
-    if (cursor) {
-      parameters.set("cursor", cursor);
-      return `/v1/fix-monitoring?${parameters.toString()}`;
-    }
-    const filters = state.fixMonitoringFilters;
-    parameters.set("limit", String(pageLimits.fixMonitoring.page));
-    if (filters.state) parameters.set("state", filters.state);
-    if (filters.changeKind) {
-      parameters.set("change_kind", filters.changeKind);
-    }
-    if (filters.severity) parameters.set("severity", filters.severity);
-    if (filters.harness) parameters.set("harness", filters.harness);
-    if (filters.issueID) parameters.set("issue_id", filters.issueID);
-    if (filters.recordedAfter) {
-      parameters.set("recorded_after", filters.recordedAfter);
-    }
-    if (filters.includeRetracted) {
-      parameters.set("include_retracted", "true");
-    }
-    return `/v1/fix-monitoring?${parameters.toString()}`;
-  }
-
-  async function loadFixMonitoring(append) {
-    const bucket = state.fixMonitoring;
-    if (append && (!bucket.hasMore || !bucket.nextCursor)) return false;
-    const generation = ++bucket.requestGeneration;
-    const cursor = append ? bucket.nextCursor : "";
-    bucket.status = append ? "loading-more" : "loading";
-    bucket.error = null;
-    renderFixMonitoring();
-    try {
-      const response = await apiGet(buildFixMonitoringPath(cursor));
-      requireFixMonitoringSchema(response);
-      if (generation !== bucket.requestGeneration) return false;
-      const page = Array.isArray(response.data)
-        ? response.data.filter(
-            (entry) =>
-              isRecord(entry) &&
-              readText(entry.issue_id) &&
-              readText(entry.annotation_id),
-          )
-        : [];
-      const data =
-        append && cursor
-          ? deduplicateByID(bucket.data.concat(page), "issue_id")
-          : deduplicateByID(page, "issue_id");
-      const nextCursor = readCursor(response.next_cursor);
-      if (response.has_more === true && !nextCursor) {
-        throw new Error(
-          "Local API returned monitoring pagination without a cursor.",
-        );
-      }
-      const viewCursor = readCursor(response.monitoring_view_cursor);
-      if (!viewCursor) {
-        throw new Error(
-          "Local API returned monitoring results without a view cursor.",
-        );
-      }
-      bucket.data = data;
-      bucket.nextCursor = nextCursor;
-      bucket.hasMore = Boolean(nextCursor);
-      bucket.viewCursor = viewCursor;
-      bucket.evidenceEvaluatedAt = readText(response.evidence_evaluated_at);
-      bucket.status = "ready";
-      renderFixMonitoring();
-      return true;
-    } catch (error) {
-      if (generation !== bucket.requestGeneration) return false;
-      if (isCursorExpired(error) && append) {
-        const closedSelectedMonitoringDetail =
-          state.selectedIssueSource === "monitoring";
-        if (closedSelectedMonitoringDetail) {
-          state.attentionRefreshGeneration += 1;
-          closeIssueDetail(false);
+        function createBriefSummaryRow(label, value) {
+            const row = createElement("div", "brief-agent-row");
+            row.append(
+                createElement("strong", "", label),
+                createElement("span", "", value),
+            );
+            return row;
         }
-        resetFixMonitoringBucket();
-        const refreshed = await loadFixMonitoring(false);
-        bucket.error = refreshed
-          ? closedSelectedMonitoringDetail
-            ? "The saved After attempts view was out of date. It was refreshed, and the open detail was closed."
-            : "The saved After attempts view was out of date and has been refreshed."
-          : "The saved After attempts view was out of date and could not be refreshed.";
-        renderFixMonitoring();
-        return refreshed;
-      }
-      bucket.status = "error";
-      bucket.error = fixMonitoringErrorMessage(error);
-      renderFixMonitoring();
-      return false;
-    }
-  }
 
-  function fixMonitoringErrorMessage(error) {
-    if (error instanceof LocalAPIError && error.status === 503) {
-      if (
-        error.problemType ===
-        "belay.local/monitoring-catchup-in-progress"
-      ) {
-        return "Follow-up evidence is catching up. Findings, evidence gaps, sessions, and recorded changes remain available.";
-      }
-      if (
-        error.problemType === "belay.local/monitoring-catchup-failed"
-      ) {
-        return "Follow-up evidence could not finish updating. Restart or retry Belay Local; other views remain available.";
-      }
-    }
-    if (isCursorExpired(error)) {
-      return "The saved After attempts view is out of date. Refresh it.";
-    }
-    return "Follow-up evidence could not be loaded. Other Local views remain available.";
-  }
+        function renderBriefCoverage(brief) {
+            const coverage = brief.coverage;
+            const limitations = coverage.limitations.slice(0, 20);
+            const sources = coverage.sources.slice(0, 10);
+            elements.briefCoverage.open =
+                readText(brief.status) === "limited" || coverage.complete !== true;
+            elements.briefCoverageSummary.textContent =
+                coverage.complete === true ?
+                state.experience === "value-first" ?
+                "All bounded Home sources completed for this view." :
+                "All bounded brief sources completed for this view." :
+                "Some activity or analysis could not be fully evaluated.";
+            const limitationFragment = document.createDocumentFragment();
+            limitations.forEach((limitation) => {
+                const message = readText(limitation && limitation.message);
+                if (message) limitationFragment.append(createElement("li", "", message));
+            });
+            if (!limitations.length && coverage.complete !== true) {
+                limitationFragment.append(
+                    createElement(
+                        "li",
+                        "",
+                        experiencePageText(
+                            "Some sources were limited; use Attention or Sessions for the available detail.",
+                        ),
+                    ),
+                );
+            }
+            elements.briefLimitations.replaceChildren(limitationFragment);
+            const sourceFragment = document.createDocumentFragment();
+            sources.forEach((source) => {
+                const row = createElement("div");
+                row.append(
+                    createElement("dt", "", briefSourceLabel(source && source.source)),
+                    createElement("dd", "", briefSourceSummary(source)),
+                );
+                sourceFragment.append(row);
+            });
+            elements.briefSources.replaceChildren(sourceFragment);
+        }
 
-  function renderFixMonitoring() {
-    const bucket = state.fixMonitoring;
-    focusRegistry.monitoringCards.clear();
-    const fragment = document.createDocumentFragment();
-    bucket.data.forEach((summary) => {
-      fragment.append(createFixMonitoringCard(summary));
-    });
-    elements.fixMonitoringList.replaceChildren(fragment);
-    elements.fixMonitoringCount.textContent =
-      bucket.status === "ready" ? formatNumber(bucket.data.length) : "—";
-    elements.fixMonitoringLoading.hidden = bucket.status !== "loading";
-    elements.fixMonitoringEmpty.hidden =
-      bucket.status !== "ready" || bucket.data.length !== 0;
-    elements.fixMonitoringEmptyTitle.textContent =
-      state.fixMonitoringFilters.includeRetracted
-        ? "No monitored attempt history matches these filters"
-        : "No active monitored attempts match these filters";
-    elements.fixMonitoringEmptyDetail.textContent =
-      "Recording an attempt is optional. Belay checks later activity only after you record one.";
-    elements.fixMonitoringPagination.hidden = !bucket.hasMore;
-    elements.fixMonitoringLoadMore.disabled =
-      bucket.status === "loading-more";
-    elements.fixMonitoringPageStatus.textContent = bucket.hasMore
-      ? `Showing ${bucket.data.length}; more monitored findings are available.`
-      : `Showing ${bucket.data.length} monitored ${
+        function briefSourceLabel(value) {
+            const labels = {
+                sessions: state.experience === "value-first" ? "History" : "Sessions",
+                attention_families: "Reviewed findings",
+                evidence_gaps: "Evidence gaps",
+            };
+            return labels[readText(value)] || "Local activity";
+        }
+
+        function briefSourceSummary(source) {
+            if (!isRecord(source)) return "Unavailable";
+            const status = readText(source.status);
+            const labels = {
+                complete: "Available",
+                truncated: "Limited",
+                ready: "Available",
+                limited: "Limited",
+                unavailable: "Unavailable",
+                failed: "Unavailable",
+            };
+            const parts = [labels[status] || "Status unavailable"];
+            const count = Number(source.evaluated_count);
+            if (Number.isFinite(count) && count >= 0) {
+                parts.push(`${formatNumber(count)} evaluated`);
+            }
+            if (source.has_more === true) parts.push("more records exist");
+            if (parseDate(source.as_of)) {
+                parts.push(`through ${formatFullDate(parseDate(source.as_of))}`);
+            }
+            return parts.join(" · ");
+        }
+
+        function supportedNextStep(nextStep) {
+            if (!isRecord(nextStep)) return false;
+            const kind = readText(nextStep.kind);
+            if (kind === "open_session") return Boolean(readText(nextStep.session_id));
+            if (kind === "open_issue") {
+                return Boolean(
+                    readText(nextStep.issue_id) && readCursor(nextStep.view_cursor),
+                );
+            }
+            if (kind === "open_attention_family") {
+                return Boolean(
+                    readText(nextStep.family_id) &&
+                    readText(nextStep.issue_id) &&
+                    readCursor(nextStep.view_cursor),
+                );
+            }
+            return false;
+        }
+
+        async function navigateSupportedNextStep(card, nextStep, returnFocus) {
+            if (!supportedNextStep(nextStep)) return false;
+            const kind = readText(nextStep.kind);
+            if (kind === "open_session") {
+                state.sessionReturnFocus = returnFocus;
+                state.sessionReturnView =
+                    returnFocus && returnFocus.type.startsWith("brief-") ?
+                    "brief" :
+                    "sessions";
+                openSession(readText(nextStep.session_id), null);
+                return true;
+            }
+            const catalog = briefNavigationCatalog(card);
+            if (kind === "open_attention_family") {
+                const family = {
+                    family_id: readText(nextStep.family_id),
+                    kind: "mapped_upstream",
+                    representative_issue_id: readText(nextStep.issue_id),
+                    view_cursor: readCursor(nextStep.view_cursor),
+                    catalog,
+                    severity: readText(card && card.severity) || "info",
+                    confidence: "",
+                    session_count: toFiniteNumber(
+                        card && card.evidence && card.evidence.session_count,
+                    ),
+                    occurrence_count: toFiniteNumber(
+                        card && card.evidence && card.evidence.occurrence_count,
+                    ),
+                    harnesses: card && card.evidence && Array.isArray(card.evidence.harnesses) ?
+                        card.evidence.harnesses : [],
+                    last_observed_at: card && card.evidence && card.evidence.last_observed_at,
+                    analysis_status: "current",
+                };
+                setActiveView("attention", false);
+                const result = selectAttentionFamily(family, true);
+                state.familyReturnFocus = returnFocus;
+                return result;
+            }
+            const issue = {
+                issue_id: readText(nextStep.issue_id),
+                title_code: readText(card && card.title_code),
+                severity: readText(card && card.severity) || "info",
+                confidence: "",
+                session_count: toFiniteNumber(
+                    card && card.evidence && card.evidence.session_count,
+                ),
+                occurrence_count: toFiniteNumber(
+                    card && card.evidence && card.evidence.occurrence_count,
+                ),
+                harnesses: card && card.evidence && Array.isArray(card.evidence.harnesses) ?
+                    card.evidence.harnesses : [],
+                last_observed_at: card && card.evidence && card.evidence.last_observed_at,
+                analysis_status: "current",
+            };
+            setActiveView("attention", false);
+            return selectIssue(
+                issue,
+                readText(card && card.kind) === "evidence_gap" ? "evidence_gap" : "issue",
+                true, {
+                    viewCursor: readCursor(nextStep.view_cursor),
+                    catalog,
+                    returnFocus,
+                },
+            );
+        }
+
+        function briefNavigationCatalog(card) {
+            return {
+                display_title: readText(card && card.title) || "Finding",
+                observation_statement: readText(card && card.observation) ||
+                    "Belay recorded activity that may deserve review.",
+                caveat: readText(card && card.limitation) ||
+                    "Review the supporting evidence before deciding what to do.",
+                next_evidence_action: "inspect_cited_events",
+            };
+        }
+
+        function prepareValueFirstAttentionLayout() {
+            const analysisDisclosure = createElement("details", "attention-disclosure");
+            analysisDisclosure.id = "analysis-disclosure";
+            analysisDisclosure.append(
+                createElement("summary", "", "Analysis status and coverage"),
+                elements.coveragePanel,
+            );
+            const filterDisclosure = createElement("details", "attention-disclosure");
+            filterDisclosure.id = "attention-filter-disclosure";
+            filterDisclosure.append(
+                createElement(
+                    "summary",
+                    "",
+                    experienceCopy[state.experience].attentionFilterSummary,
+                ),
+                elements.attentionFilters,
+            );
+            elements.safetyContent = createElement("div", "safety-content");
+            elements.safetyContent.id = "safety-content";
+            elements.safetyContent.append(
+                elements.stableIssuesSection,
+                elements.evidenceGapsSection,
+                elements.fixMonitoringSection,
+                analysisDisclosure,
+                filterDisclosure,
+            );
+            elements.attentionScroll.replaceChildren(
+                elements.costIssuesSection,
+                elements.safetyContent,
+            );
+            setAttentionMode("issues");
+        }
+
+        function bindEvents() {
+            elements.updateNotice.addEventListener("click", openUpdateDialog);
+            elements.updateClose.addEventListener("click", () => {
+                closeUpdateDialog(true);
+            });
+            elements.updateCopyCommand.addEventListener("click", () => {
+                void copyText(updateInstallCommand, elements.updateCopyCommand);
+            });
+            elements.updateRemind.addEventListener("click", () => {
+                void submitUpdateAction("remind");
+            });
+            elements.updateSkip.addEventListener("click", () => {
+                void submitUpdateAction("dismiss");
+            });
+            elements.updateModalLayer.addEventListener("keydown", handleModalKeydown);
+            elements.attentionFilters.addEventListener("submit", (event) => {
+                event.preventDefault();
+                state.issueFilters.harness = elements.issueFilterHarness.value.trim();
+                resetAndLoadAttention();
+            });
+            elements.navBrief.addEventListener("click", () => {
+                setActiveView("brief", true);
+                if (state.briefStatus === "idle") void loadDeveloperBrief();
+            });
+            elements.navAttention.addEventListener("click", () => {
+                setActiveView("attention", true);
+                if (state.costIssueStatus === "idle") void loadCostIssues();
+            });
+            elements.navSessions.addEventListener("click", () => {
+                setActiveView("sessions", true);
+                if (!state.sessions.length) refreshSessions(false);
+            });
+            elements.sessionTabSummary.addEventListener("click", () => {
+                setSessionTab("summary");
+            });
+            elements.sessionTabTimeline.addEventListener("click", () => {
+                setSessionTab("timeline");
+            });
+            elements.navHabits.addEventListener("click", () => {
+                setActiveView("habits", true);
+                if (state.habitsStatus === "idle") void loadUserInsights();
+            });
+            elements.habitsRetry.addEventListener("click", () => {
+                void loadUserInsights();
+            });
+            elements.habitsDebriefAll.addEventListener("click", () => {
+                void generateAllHabitsDebriefs();
+            });
+            elements.reportHabitsOpen.addEventListener("click", () => {
+                setActiveView("habits", true);
+                if (state.habitsStatus === "idle") void loadUserInsights();
+            });
+            elements.reportCoverageOpen.addEventListener("click", () => {
+              elements.briefCoverage.open = true;
+              elements.briefCoverage.scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+              });
+            });
+            elements.briefRetry.addEventListener("click", () => {
+                void loadDeveloperBrief();
+            });
+            elements.briefOpenAttention.addEventListener("click", () => {
+                setActiveView("attention", true);
+                if (state.costIssueStatus === "idle") void loadCostIssues();
+            });
+            elements.attentionModeIssues.addEventListener("click", () => {
+                setAttentionMode("issues");
+                if (state.costIssueStatus === "idle") void loadCostIssues();
+            });
+            elements.attentionModeSafety.addEventListener("click", () => {
+                setAttentionMode("safety");
+                if (state.issues.status === "idle") void refreshAttention(false);
+            });
+            elements.costIssuesRetry.addEventListener("click", () => {
+                void loadCostIssues();
+            });
+            elements.briefOpenSessions.addEventListener("click", () => {
+                setActiveView("sessions", true);
+                if (!state.sessions.length) void refreshSessions(false);
+            });
+            elements.missionPackClose.addEventListener("click", () => {
+                closeMissionPackDrawer(true);
+            });
+            elements.missionPackDone.addEventListener("click", () => {
+                closeMissionPackDrawer(true);
+            });
+            elements.missionPackRetry.addEventListener("click", () => {
+                const issueID = readText(
+                    state.missionPackIssue && state.missionPackIssue.issue_id,
+                );
+                if (!issueID) return;
+                resetMissionPackDrawer();
+                void loadMissionPack(issueID);
+            });
+            elements.missionPackCopyClaude.addEventListener("click", () => {
+                const issueID = readText(
+                    state.missionPackIssue && state.missionPackIssue.issue_id,
+                );
+                void copyText(
+                    agentIssueCommand("claude", issueID),
+                    elements.missionPackCopyClaude,
+                );
+            });
+            elements.missionPackCopyCodex.addEventListener("click", () => {
+                const issueID = readText(
+                    state.missionPackIssue && state.missionPackIssue.issue_id,
+                );
+                void copyText(
+                    agentIssueCommand("codex", issueID),
+                    elements.missionPackCopyCodex,
+                );
+            });
+            elements.missionPackShowEvidence.addEventListener("click", () => {
+                const issue = state.missionPackIssue;
+                if (!issue) return;
+                closeMissionPackDrawer(false);
+                openReportEvidenceDrawer(issue);
+            });
+            elements.missionPackModalLayer.addEventListener(
+                "keydown",
+                handleModalKeydown,
+            );
+            elements.reportEvidenceClose.addEventListener("click", () => {
+                closeReportEvidenceDrawer(true);
+            });
+            elements.reportEvidenceDone.addEventListener("click", () => {
+                closeReportEvidenceDrawer(true);
+            });
+            elements.reportEvidenceCopyClaude.addEventListener("click", () => {
+                const issueID = state.reportEvidenceIssueID;
+                void copyText(
+                    agentIssueCommand("claude", issueID),
+                    elements.reportEvidenceCopyClaude,
+                );
+            });
+            elements.reportEvidenceCopyCodex.addEventListener("click", () => {
+                const issueID = state.reportEvidenceIssueID;
+                void copyText(
+                    agentIssueCommand("codex", issueID),
+                    elements.reportEvidenceCopyCodex,
+                );
+            });
+            elements.reportEvidenceModalLayer.addEventListener(
+                "keydown",
+                handleModalKeydown,
+            );
+            elements.refreshButton.addEventListener("click", () => refreshAll(true));
+            elements.issuesLoadMore.addEventListener("click", () => {
+                loadIssueBucket(state.issues, true);
+            });
+            elements.familyMembersLoadMore.addEventListener("click", () => {
+                void loadAttentionFamilyDetail(true);
+            });
+            elements.evidenceGapsLoadMore.addEventListener("click", () => {
+                loadIssueBucket(state.evidenceGaps, true);
+            });
+            elements.fixMonitoringLoadMore.addEventListener("click", () => {
+                void loadFixMonitoring(true);
+            });
+            elements.fixMonitoringFilters.addEventListener("submit", (event) => {
+                event.preventDefault();
+                syncFixMonitoringFilters();
+                resetAndLoadFixMonitoring();
+            });
+            [
+                [elements.fixMonitoringFilterState, "state"],
+                [elements.fixMonitoringFilterChangeKind, "changeKind"],
+                [elements.fixMonitoringFilterSeverity, "severity"],
+            ].forEach(([element, key]) => {
+                element.addEventListener("change", () => {
+                    state.fixMonitoringFilters[key] = element.value;
+                    if (key === "state" && element.value === "retracted") {
+                        state.fixMonitoringFilters.includeRetracted = true;
+                        elements.fixMonitoringFilterRetracted.checked = true;
+                    }
+                    resetAndLoadFixMonitoring();
+                });
+            });
+            elements.fixMonitoringFilterRetracted.addEventListener("change", () => {
+                state.fixMonitoringFilters.includeRetracted =
+                    elements.fixMonitoringFilterRetracted.checked;
+                resetAndLoadFixMonitoring();
+            });
+            [
+                elements.fixMonitoringFilterHarness,
+                elements.fixMonitoringFilterIssueID,
+                elements.fixMonitoringFilterRecordedAfter,
+            ].forEach((element) => {
+                element.addEventListener("change", () => {
+                    syncFixMonitoringFilters();
+                    resetAndLoadFixMonitoring();
+                });
+            });
+            elements.clearFixMonitoringFilters.addEventListener("click", () => {
+                state.fixMonitoringFilters = {
+                    state: "",
+                    changeKind: "",
+                    severity: "",
+                    harness: "",
+                    issueID: "",
+                    recordedAfter: "",
+                    includeRetracted: false,
+                };
+                renderFixMonitoringFilters();
+                resetAndLoadFixMonitoring();
+            });
+            elements.occurrencesLoadMore.addEventListener("click", loadMoreOccurrences);
+            elements.issueEvidencePreviewAll.addEventListener("click", () => {
+                const preview = state.issueEvidencePreview;
+                const occurrence = state.occurrences.find(
+                    (value) =>
+                    readText(value.occurrence_id) === readText(preview.occurrenceID),
+                );
+                if (occurrence) void loadIssueEvidencePreview(occurrence, true);
+            });
+            elements.recordFixAttempt.addEventListener("click", openFixAttemptDialog);
+            elements.fixHistoryLoadMore.addEventListener(
+                "click",
+                loadMoreFixMonitoringDetail,
+            );
+            elements.issueBackButton.addEventListener("click", closeIssueDetail);
+            elements.familyBackButton.addEventListener("click", closeFamilyDetail);
+            elements.copyIssueFingerprint.addEventListener("click", () => {
+                copyText(
+                    readText(state.selectedIssue && state.selectedIssue.fingerprint_id),
+                    elements.copyIssueFingerprint,
+                );
+            });
+            elements.sessionsLoadMore.addEventListener("click", loadMoreSessions);
+            elements.eventsLoadMore.addEventListener("click", loadMoreEvents);
+            elements.findingsLoadMore.addEventListener("click", loadMoreFindings);
+            elements.backButton.addEventListener("click", closeTimeline);
+            elements.errorRetry.addEventListener("click", retryLastAction);
+            elements.copySelectedSession.addEventListener("click", () => {
+                copyText(state.selectedSessionID, elements.copySelectedSession);
+            });
+            elements.allEventsToggle.addEventListener("click", () => {
+                state.showAllEvents = !state.showAllEvents;
+                elements.allEventsToggle.setAttribute(
+                    "aria-pressed",
+                    String(state.showAllEvents),
+                );
+                elements.allEventsToggle.classList.toggle(
+                    "is-active",
+                    state.showAllEvents,
+                );
+                renderEvents();
+            });
+            elements.fixAttemptClose.addEventListener("click", () => {
+                closeFixAttemptDialog(true);
+            });
+            elements.fixAttemptCancel.addEventListener("click", () => {
+                closeFixAttemptDialog(true);
+            });
+            elements.fixAttemptConfirm.addEventListener("click", () => {
+                void submitFixAttempt();
+            });
+            elements.abandonFixDraft.addEventListener("click", abandonFixDraft);
+            elements.fixCategoryOptions.addEventListener("change", (event) => {
+                updateFixDraftChoice(event.target);
+            });
+            elements.fixRetractionClose.addEventListener("click", () => {
+                closeFixRetractionDialog(true);
+            });
+            elements.fixRetractionCancel.addEventListener("click", () => {
+                closeFixRetractionDialog(true);
+            });
+            elements.fixRetractionConfirm.addEventListener("click", () => {
+                void submitFixRetraction();
+            });
+            elements.abandonFixRetraction.addEventListener(
+                "click",
+                abandonFixRetraction,
+            );
+            elements.fixRetractionOptions.addEventListener("change", (event) => {
+                updateFixRetractionChoice(event.target);
+            });
+            elements.fixAttemptModalLayer.addEventListener(
+                "keydown",
+                handleModalKeydown,
+            );
+            elements.fixRetractionModalLayer.addEventListener(
+                "keydown",
+                handleModalKeydown,
+            );
+
+            [
+                [elements.issueFilterSeverity, "severity"],
+                [elements.issueFilterOrigin, "origin"],
+                [elements.issueFilterStatus, "analysisStatus"],
+            ].forEach(([element, key]) => {
+                element.addEventListener("change", () => {
+                    state.issueFilters[key] = element.value;
+                    resetAndLoadAttention();
+                });
+            });
+            elements.issueFilterHarness.addEventListener("input", () => {
+                globalThis.clearTimeout(issueFilterTimer);
+                issueFilterTimer = globalThis.setTimeout(() => {
+                    state.issueFilters.harness = elements.issueFilterHarness.value.trim();
+                    resetAndLoadAttention();
+                }, 250);
+            });
+            elements.issueFilterExperimental.addEventListener("change", () => {
+                state.issueFilters.experimental =
+                    elements.issueFilterExperimental.checked;
+                resetAndLoadAttention();
+            });
+            elements.clearAttentionFilters.addEventListener("click", () => {
+                state.issueFilters = {
+                    severity: "",
+                    harness: "",
+                    origin: "",
+                    analysisStatus: "",
+                    experimental: false,
+                };
+                elements.issueFilterSeverity.value = "";
+                elements.issueFilterHarness.value = "";
+                elements.issueFilterOrigin.value = "";
+                elements.issueFilterStatus.value = "";
+                elements.issueFilterExperimental.checked = false;
+                resetAndLoadAttention();
+            });
+
+            elements.sessionSearch.addEventListener("input", (event) => {
+                state.filters.query = event.target.value.trim();
+                globalThis.clearTimeout(searchTimer);
+                searchTimer = globalThis.setTimeout(resetAndLoadSessions, 250);
+            });
+
+            [
+                [elements.filterHarness, "harness"],
+                [elements.filterCapture, "capture"],
+                [elements.filterOutcome, "outcome"],
+            ].forEach(([element, key]) => {
+                element.addEventListener("change", () => {
+                    state.filters[key] = element.value;
+                    resetAndLoadSessions();
+                });
+            });
+
+            elements.filterDate.addEventListener("change", () => {
+                state.filters.days = elements.filterDate.value;
+                state.sessionOccurredAfter = dateLowerBound(state.filters.days);
+                resetAndLoadSessions();
+            });
+
+            elements.clearFilters.addEventListener("click", () => {
+                state.filters = {
+                    query: "",
+                    harness: "",
+                    capture: "",
+                    outcome: "",
+                    days: "",
+                };
+                state.sessionOccurredAfter = "";
+                elements.sessionSearch.value = "";
+                elements.filterHarness.value = "";
+                elements.filterCapture.value = "";
+                elements.filterOutcome.value = "";
+                elements.filterDate.value = "";
+                resetAndLoadSessions();
+            });
+
+            globalThis.addEventListener("keydown", (event) => {
+                if (event.key !== "Escape") return;
+                if (state.activeModal) return;
+                if (state.activeView === "sessions" && state.selectedSessionID) {
+                    closeTimeline();
+                } else if (state.activeView === "attention" && state.selectedIssueID) {
+                    closeIssueDetail();
+                } else if (state.activeView === "attention" && state.selectedFamily) {
+                    closeFamilyDetail();
+                }
+            });
+            const handleMobileChange = () => applyPaneAccessibility();
+            if (typeof mobileQuery.addEventListener === "function") {
+                mobileQuery.addEventListener("change", handleMobileChange);
+            } else if (typeof mobileQuery.addListener === "function") {
+                mobileQuery.addListener(handleMobileChange);
+            }
+        }
+
+        async function refreshAll(preserveSelection) {
+            hideError();
+            elements.refreshButton.disabled = true;
+            try {
+                if (state.activeView === "brief") {
+                    await loadDeveloperBrief();
+                    return;
+                }
+                if (state.activeView === "habits") {
+                    await loadUserInsights();
+                    return;
+                }
+                if (state.activeView === "attention") {
+                    if (state.attentionMode === "safety") {
+                        await refreshAttention(preserveSelection);
+                    } else {
+                        await loadCostIssues();
+                    }
+                    return;
+                }
+                await refreshSessions(preserveSelection);
+            } finally {
+                elements.refreshButton.disabled = false;
+            }
+        }
+
+        function setAttentionMode(mode) {
+            const selected = mode === "safety" ? "safety" : "issues";
+            state.attentionMode = selected;
+            const issuesActive = selected === "issues";
+            elements.attentionModeIssues.setAttribute(
+                "aria-selected",
+                issuesActive ? "true" : "false",
+            );
+            elements.attentionModeSafety.setAttribute(
+                "aria-selected",
+                issuesActive ? "false" : "true",
+            );
+            elements.costIssuesSection.hidden = !issuesActive;
+            if (elements.safetyContent) {
+                elements.safetyContent.hidden = issuesActive;
+            }
+            elements.attentionDetailPane.hidden = issuesActive;
+            elements.attentionView.classList.toggle("cost-mode", issuesActive);
+            renderAttentionTotals();
+        }
+
+        async function loadCostIssues() {
+            const generation = ++state.costIssueRequestGeneration;
+            state.costIssueStatus = "loading";
+            state.costIssueError = "";
+            renderCostIssues();
+            try {
+                const response = await apiGet("/v1/cost-issues?limit=5");
+                if (generation !== state.costIssueRequestGeneration) return false;
+                if (!isRecord(response) ||
+                    readText(response.schema_version) !== "belay.cost-issues.v1" ||
+                    !Array.isArray(response.data)
+                ) {
+                    throw new Error("Local API returned invalid cost-ranked issues.");
+                }
+                state.costIssues = response.data.slice(0, 5).map(requireCostIssue);
+                state.costIssueStatus = "ready";
+                renderCostIssues();
+                return true;
+            } catch (error) {
+                if (generation !== state.costIssueRequestGeneration) return false;
+                state.costIssueStatus = "error";
+                state.costIssueError =
+                    error instanceof Error ? error.message : "Cost issue read failed.";
+                renderCostIssues();
+                return false;
+            }
+        }
+
+        function requireCostIssue(issue) {
+            if (!isRecord(issue) ||
+                !readText(issue.issue_id) ||
+                !readText(issue.detector_id) ||
+                !readText(issue.headline) ||
+                !isRecord(issue.cost) ||
+                !Array.isArray(issue.sessions) ||
+                !Array.isArray(issue.trend) ||
+                !Array.isArray(issue.excerpts) ||
+                !isRecord(issue.evidence_basis) ||
+                !readText(issue.evidence_basis.kind) ||
+                !readText(issue.evidence_basis.summary) ||
+                !isRecord(issue.project) ||
+                !isRecord(issue.suggested_fix)
+            ) {
+                throw new Error("Local API returned an invalid cost issue.");
+            }
+            return issue;
+        }
+
+        function renderCostIssues() {
+            const loading = state.costIssueStatus === "loading";
+            const failed = state.costIssueStatus === "error";
+            const empty =
+                state.costIssueStatus === "ready" && state.costIssues.length === 0;
+            elements.costIssuesLoading.hidden = !loading;
+            elements.costIssuesError.hidden = !failed;
+            elements.costIssuesEmpty.hidden = !empty;
+            elements.costIssueList.hidden = loading || failed || empty;
+            elements.costIssueCount.textContent =
+                state.costIssueStatus === "ready" ? String(state.costIssues.length) : "—";
+            if (loading || failed || empty) {
+                elements.costIssueList.replaceChildren();
+                renderAttentionTotals();
+                return;
+            }
+            const fragment = document.createDocumentFragment();
+            state.costIssues.forEach((issue, index) => {
+                fragment.append(createCostIssueCard(issue, index));
+            });
+            elements.costIssueList.replaceChildren(fragment);
+            renderAttentionTotals();
+        }
+
+        function createCostIssueCard(issue, index) {
+            const card = createElement("article", "cost-issue-card");
+            const header = createElement("header", "cost-issue-card-header");
+            const heading = createElement("div");
+            heading.append(
+                createElement(
+                    "p",
+                    "eyebrow",
+                    `${projectDisplayName(issue.project)} · ${readableLabel(issue.detector_id)}`,
+                ),
+                createElement("h3", "", readText(issue.headline)),
+            );
+            header.append(
+                heading,
+                createElement("span", "cost-issue-rank", `#${index + 1}`),
+            );
+            card.append(header);
+
+            const metrics = createElement("dl", "cost-issue-metrics");
+            appendCostMetric(
+                metrics,
+                "Attributed cost",
+                formatIssueDollarCost(issue.cost),
+            );
+            appendCostMetric(metrics, "Time", formatIssueMinutes(issue.cost));
+            appendCostMetric(metrics, "Tokens", formatNumber(issue.cost.wasted_tokens));
+            const sessions = Math.max(
+                toFiniteNumber(issue.session_count),
+                issue.sessions.length,
+            );
+            appendCostMetric(
+                metrics,
+                "Sessions",
+                `${formatNumber(sessions)} ${sessions === 1 ? "session" : "sessions"}`,
+            );
+            card.append(metrics);
+
+            if (issue.excerpts.length) {
+                card.append(createCostIssueExcerpt(issue.excerpts[0], true));
+            }
+            card.append(createIssueEvidenceBasis(issue));
+            const trend = issue.trend
+                .slice(-8)
+                .map((week) => formatNumber(week && week.count))
+                .join(" · ");
+            if (trend) {
+                card.append(
+                    createElement(
+                        "p",
+                        "cost-issue-trend",
+                        `Weekly occurrences, oldest to newest: ${trend}`,
+                    ),
+                );
+            }
+
+            const fix = createElement("section", "cost-issue-fix");
+            fix.append(
+                createElement("p", "eyebrow", "Suggested fix"),
+                createElement(
+                    "h4",
+                    "",
+                    readText(issue.suggested_fix.target_file) || "Agent instructions",
+                ),
+                createElement(
+                    "p",
+                    "",
+                    readText(issue.suggested_fix.rationale) ||
+                    "Add a concrete project rule that prevents this pattern.",
+                ),
+            );
+            const fixActions = createElement("div", "cost-issue-fix-actions");
+            const prepareButton = createElement(
+                "button",
+                "secondary-button",
+                "Prepare fix",
+            );
+            prepareButton.type = "button";
+            const fixStatus = createElement("p", "cost-issue-fix-status");
+            fixStatus.setAttribute("aria-live", "polite");
+            const diff = createElement("pre", "cost-issue-fix-diff");
+            diff.hidden = true;
+            prepareButton.addEventListener("click", async() => {
+                const issueID = readText(issue.issue_id);
+                const kind = readText(issue.suggested_fix.kind);
+                const targetFile = readText(issue.suggested_fix.target_file);
+                const idempotencyKey = createUUIDv4();
+                if (!issueID || !kind || !targetFile || !idempotencyKey) {
+                    fixStatus.textContent = "This fix could not be prepared.";
+                    return;
+                }
+                prepareButton.disabled = true;
+                prepareButton.textContent = "Preparing…";
+                fixStatus.textContent = "";
+                try {
+                    const response = await apiMutation(
+                        `/v1/cost-issues/${encodeURIComponent(issueID)}/fixes`, { kind, target_file: targetFile },
+                        idempotencyKey,
+                        "propose-cost-issue-fix.v1",
+                    );
+                    if (
+                        readText(response && response.schema_version) !==
+                        "belay.cost-issue-fix.v1" ||
+                        !isRecord(response && response.data) ||
+                        !readText(response.data.fix_id) ||
+                        !readText(response.data.unified_diff)
+                    ) {
+                        throw new Error("Local API returned an invalid fix proposal.");
+                    }
+                    diff.textContent = readText(response.data.unified_diff);
+                    diff.hidden = false;
+                    fixStatus.textContent =
+                        "Proposal ready. Review the diff, then apply it with /belay in Claude Code or $belay in Codex.";
+                    prepareButton.textContent = "Prepared";
+                } catch (error) {
+                    fixStatus.textContent =
+                        error instanceof Error ?
+                        error.message :
+                        "This fix could not be prepared.";
+                    prepareButton.disabled = false;
+                    prepareButton.textContent = "Try preparing again";
+                }
+            });
+            fixActions.append(prepareButton);
+            fix.append(fixActions, fixStatus, diff);
+            card.append(fix);
+
+            const evidence = createElement("details", "cost-issue-evidence");
+            evidence.append(
+                createElement(
+                    "summary",
+                    "",
+                    `Show evidence (${formatNumber(issue.excerpts.length)})`,
+                ),
+            );
+            const evidenceList = createElement("div", "cost-issue-evidence-list");
+            issue.excerpts.forEach((excerpt) => {
+                evidenceList.append(createCostIssueExcerpt(excerpt, false));
+            });
+            evidence.append(evidenceList);
+            card.append(evidence);
+            return card;
+        }
+
+        function createIssueEvidenceBasis(issue) {
+            const basis = isRecord(issue && issue.evidence_basis) ?
+                issue.evidence_basis : {};
+            const summary =
+                readText(basis.summary) || "Detected from retained session activity.";
+            return createElement(
+                "p",
+                "issue-evidence-basis",
+                `Why Belay flagged this · ${summary}`,
+            );
+        }
+
+        function appendCostMetric(list, label, value) {
+            const item = createElement("div");
+            item.append(createElement("dt", "", label), createElement("dd", "", value));
+            list.append(item);
+        }
+
+        function createCostIssueExcerpt(excerpt, preview) {
+            const wrapper = createElement(
+                "div",
+                preview ? "cost-issue-excerpt preview" : "cost-issue-excerpt",
+            );
+            const citation = isRecord(excerpt && excerpt.citation) ?
+                excerpt.citation : {};
+            const role = readableLabel(excerpt && excerpt.role, "Transcript");
+            const tool = readText(excerpt && excerpt.tool_name);
+            const session = compactID(citation.session_key);
+            const turn = Number.isFinite(Number(citation.turn_index)) ?
+                `turn ${formatNumber(citation.turn_index)}` :
+                "turn unavailable";
+            wrapper.append(
+                createElement(
+                    "p",
+                    "cost-issue-citation", [role, tool, session, turn].filter(Boolean).join(" · "),
+                ),
+                createElement(
+                    "blockquote",
+                    "",
+                    readText(excerpt && excerpt.text) || "Excerpt unavailable",
+                ),
+            );
+            return wrapper;
+        }
+
+        function formatIssueDollarCost(cost) {
+            const value = cost && cost.wasted_usd;
+            if (typeof value !== "number" || !Number.isFinite(value)) {
+                return cost && cost.lower_bound ?
+                    "At least the known token cost" :
+                    "Unknown model price";
+            }
+            const formatted = new Intl.NumberFormat(undefined, {
+                style: "currency",
+                currency: "USD",
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+            }).format(Math.max(0, value));
+            return cost.lower_bound ? `At least ${formatted}` : formatted;
+        }
+
+        function formatIssueMinutes(cost) {
+            const minutes = Math.max(0, toFiniteNumber(cost && cost.wasted_minutes));
+            const formatted =
+                minutes >= 10 ? formatNumber(Math.round(minutes)) : minutes.toFixed(1);
+            return `${cost && cost.lower_bound ? "At least " : ""}${formatted} active min`;
+        }
+
+        function formatIssueTokens(cost) {
+            const tokens = Math.max(0, toFiniteNumber(cost && cost.wasted_tokens));
+            return `${cost && cost.lower_bound ? "At least " : ""}${formatNumber(tokens)} tokens`;
+        }
+
+        function projectDisplayName(project) {
+            const identity = readText(project && project.identity);
+            const path = readText(project && project.path);
+            const localIdentity = /^(?:\/|[A-Za-z]:[\\/])/.test(identity);
+            const candidate =
+                localIdentity && path && path !== identity ? path : identity || path;
+            if (!candidate) return "Project unavailable";
+            const parts = candidate.split(/[/:\\]/).filter(Boolean);
+            return (parts[parts.length - 1] || candidate).replace(/\.git$/i, "");
+        }
+
+        async function refreshSessions(preserveSelection) {
+            const selectedID = preserveSelection ? state.selectedSessionID : "";
+            state.sessionLimit = pageLimits.sessions.initial;
+            state.sessionNextCursor = "";
+            const [, sessionsResult] = await Promise.allSettled([
+                loadStats(),
+                loadSessions(false),
+            ]);
+            const sessionsReady =
+                sessionsResult.status === "fulfilled" && sessionsResult.value === true;
+            if (!sessionsReady) return false;
+            if (
+                selectedID &&
+                state.sessions.some(
+                    (session) => readText(session.session_id) === selectedID,
+                )
+            ) {
+                openSession(selectedID, state.selectedSessionDetail);
+            }
+            return true;
+        }
+
+        function setActiveView(view, moveFocus) {
+            const next = ["brief", "attention", "sessions", "habits"].includes(view) ?
+                view :
+                "brief";
+            if (next !== "attention" && state.activeView === "attention") {
+                state.attentionRefreshGeneration += 1;
+            }
+            if (next !== "sessions" && state.activeView === "sessions") {
+                state.directSessionRequestGeneration += 1;
+            }
+            state.activeView = next;
+            const briefActive = next === "brief";
+            const attentionActive = next === "attention";
+            const sessionsActive = next === "sessions";
+            const habitsActive = next === "habits";
+            setViewVisibility(elements.briefView, briefActive);
+            setViewVisibility(elements.attentionView, attentionActive);
+            setViewVisibility(elements.sessionsView, sessionsActive);
+            setViewVisibility(elements.habitsView, habitsActive);
+            setCurrentNavigation(elements.navBrief, briefActive);
+            setCurrentNavigation(elements.navAttention, attentionActive);
+            setCurrentNavigation(elements.navSessions, sessionsActive);
+            setCurrentNavigation(elements.navHabits, habitsActive);
+            applyPaneAccessibility();
+            if (moveFocus) {
+                focusCurrentElement(
+                    briefActive ?
+                    elements.navBrief :
+                    attentionActive ?
+                    elements.navAttention :
+                    sessionsActive ?
+                    elements.navSessions :
+                    elements.navHabits,
+                );
+            }
+        }
+
+        function setViewVisibility(element, visible) {
+            element.hidden = !visible;
+            element.inert = !visible;
+            if (visible) {
+                element.removeAttribute("aria-hidden");
+            } else {
+                element.setAttribute("aria-hidden", "true");
+            }
+        }
+
+        function setCurrentNavigation(button, current) {
+            if (current) {
+                button.setAttribute("aria-current", "page");
+            } else {
+                button.removeAttribute("aria-current");
+            }
+        }
+
+        function applyPaneAccessibility() {
+            const mobile = mobileQuery.matches;
+            const issueOpen = Boolean(state.selectedIssueID || state.selectedFamily);
+            const sessionOpen = Boolean(state.selectedSessionID);
+            setObscuredPane(
+                elements.attentionListPane,
+                state.activeView === "attention" && mobile && issueOpen,
+            );
+            setObscuredPane(
+                elements.attentionDetailPane,
+                state.activeView === "attention" && mobile && !issueOpen,
+            );
+            setObscuredPane(
+                elements.sessionPanel,
+                state.activeView === "sessions" && mobile && sessionOpen,
+            );
+            setObscuredPane(
+                elements.timelinePanel,
+                state.activeView === "sessions" && mobile && !sessionOpen,
+            );
+        }
+
+        function setObscuredPane(element, obscured) {
+            element.inert = obscured;
+            if (obscured) {
+                element.setAttribute("aria-hidden", "true");
+            } else {
+                element.removeAttribute("aria-hidden");
+            }
+        }
+
+        function issueFocusKey(kind, issueID) {
+            return `${kind === "evidence_gap" ? "evidence_gap" : "issue"}\u0000${issueID}`;
+        }
+
+        function familyFocusKey(familyID) {
+            return readText(familyID);
+        }
+
+        function familyMemberFocusKey(familyID, issueID) {
+            return `${readText(familyID)}\u0000${readText(issueID)}`;
+        }
+
+        function occurrenceFocusKey(issueID, occurrence) {
+            const occurrenceID = readText(occurrence && occurrence.occurrence_id);
+            const sessionID = readText(occurrence && occurrence.session_id);
+            return `${issueID}\u0000${occurrenceID || sessionID}`;
+        }
+
+        function clearIssueFocusRegistry(kind) {
+            const prefix = `${kind === "evidence_gap" ? "evidence_gap" : "issue"}\u0000`;
+            Array.from(focusRegistry.issueCards.keys()).forEach((key) => {
+                if (key.startsWith(prefix)) focusRegistry.issueCards.delete(key);
+            });
+        }
+
+        function resolveFocusReference(reference) {
+            if (!reference) return null;
+            if (reference.type === "mission-pack") {
+                return focusRegistry.missionPackTriggers.get(reference.issueID) || null;
+            }
+            if (reference.type === "report-evidence") {
+                return (
+                    focusRegistry.reportEvidenceTriggers.get(reference.issueID) || null
+                );
+            }
+            if (reference.type === "brief-action") {
+                return focusRegistry.briefActions.get(reference.key) || null;
+            }
+            if (reference.type === "brief-session") {
+                return focusRegistry.briefSessions.get(reference.key) || null;
+            }
+            if (reference.type === "diagnosis-action") {
+                return focusRegistry.diagnosisActions.get(reference.key) || null;
+            }
+            if (reference.type === "monitoring") {
+                return focusRegistry.monitoringCards.get(reference.key) || null;
+            }
+            if (reference.type === "issue") {
+                return focusRegistry.issueCards.get(reference.key) || null;
+            }
+            if (reference.type === "family") {
+                return focusRegistry.familyCards.get(reference.familyID) || null;
+            }
+            if (reference.type === "family-member") {
+                return focusRegistry.familyMembers.get(reference.key) || null;
+            }
+            if (reference.type === "occurrence") {
+                return focusRegistry.occurrenceActions.get(reference.key) || null;
+            }
+            if (reference.type === "session") {
+                return focusRegistry.sessionCards.get(reference.sessionID) || null;
+            }
+            if (reference.type === "fix-trigger") {
+                return focusRegistry.fixTriggers.get(reference.issueID) || null;
+            }
+            if (reference.type === "fix-history") {
+                return focusRegistry.fixHistoryRows.get(reference.annotationID) || null;
+            }
+            if (reference.type === "fix-observation") {
+                return (
+                    focusRegistry.fixObservationRows.get(reference.recurrenceID) || null
+                );
+            }
+            if (reference.type === "fix-retraction") {
+                return (
+                    focusRegistry.fixRetractionTriggers.get(reference.annotationID) || null
+                );
+            }
+            return null;
+        }
+
+        function canReceiveFocus(element) {
+            if (!element ||
+                !element.isConnected ||
+                typeof element.focus !== "function" ||
+                element.closest("[hidden]") ||
+                element.closest('[aria-hidden="true"]')
+            ) {
+                return false;
+            }
+            let current = element;
+            while (current) {
+                if (current.inert === true) return false;
+                current = current.parentElement;
+            }
+            return true;
+        }
+
+        function focusCurrentElement(element) {
+            if (!canReceiveFocus(element)) return false;
+            element.focus();
+            return true;
+        }
+
+        function restoreLogicalFocus(reference, fallback) {
+            return (
+                focusCurrentElement(resolveFocusReference(reference)) ||
+                focusCurrentElement(fallback)
+            );
+        }
+
+        async function refreshAttention(
+            preserveSelection,
+            suppressFailureNotice = false,
+        ) {
+            const refreshGeneration = ++state.attentionRefreshGeneration;
+            const selectedID = preserveSelection ? state.selectedIssueID : "";
+            const selectedKind = preserveSelection ? state.selectedIssueKind : "";
+            const selectedSource = preserveSelection ? state.selectedIssueSource : "";
+            const selectedFamilyID =
+                preserveSelection && state.selectedFamily ?
+                readText(state.selectedFamily.family_id) :
+                preserveSelection ?
+                readText(state.selectedIssueFamilyID) :
+                "";
+            const selectedFamilyMemberPageBudget = Math.max(
+                1,
+                Math.ceil(state.familyMembers.length / pageLimits.familyMembers.page),
+            );
+            const selectedBucket =
+                selectedKind === "evidence_gap" ? state.evidenceGaps : state.issues;
+            const selectedPageBudget = Math.max(
+                1,
+                Math.ceil(selectedBucket.data.length / pageLimits.issues.page),
+            );
+            if ((selectedID || selectedFamilyID) && selectedSource !== "monitoring") {
+                closeIssueDetail(false, true);
+                clearAttentionFamilyDetailState();
+                showAttentionNotice(
+                    "Refreshing Attention; selected detail is hidden until current data confirms it.",
+                    "pending",
+                );
+            } else if (!preserveSelection) {
+                closeIssueDetail(false, true);
+                clearAttentionFamilyDetailState();
+            }
+            resetIssueBucket(state.issues);
+            resetIssueBucket(state.evidenceGaps);
+            resetFixMonitoringBucket();
+            const [issuesReady, gapsReady, monitoringReady] = await Promise.all([
+                loadIssueBucket(state.issues, false),
+                loadIssueBucket(state.evidenceGaps, false),
+                loadFixMonitoring(false),
+            ]);
+            if (refreshGeneration !== state.attentionRefreshGeneration) return false;
+            if (selectedID && selectedSource === "monitoring") {
+                if (!monitoringReady) {
+                    state.fixHistoryStale = true;
+                    state.fixHistoryError =
+                        "Monitoring refresh failed. Previously loaded attempt detail may be stale.";
+                    renderFixAttempts();
+                    return false;
+                }
+                const summary = state.fixMonitoring.data.find(
+                    (entry) => readText(entry.issue_id) === selectedID,
+                );
+                if (!summary) {
+                    closeIssueDetail(false);
+                    showAttentionNotice(
+                        state.fixMonitoring.hasMore ?
+                        "Follow-up evidence refreshed. The selected item is outside the loaded results." :
+                        "Follow-up evidence refreshed. The selected item is no longer visible under the current filters.",
+                        "status",
+                        7000,
+                    );
+                    return issuesReady && gapsReady;
+                }
+                const detailReady = await refreshSelectedMonitoringIssue(summary);
+                if (refreshGeneration !== state.attentionRefreshGeneration) return false;
+                if (!detailReady) {
+                    state.fixHistoryStale = true;
+                    state.fixHistoryError =
+                        "Monitoring list refreshed, but attempt detail could not be refreshed.";
+                    renderFixAttempts();
+                    return false;
+                }
+                showAttentionNotice(
+                    "Attention refreshed; follow-up evidence was reloaded from the current view.",
+                    "success",
+                    4000,
+                );
+                return issuesReady && gapsReady;
+            }
+            if (!issuesReady || !gapsReady) {
+                if (!suppressFailureNotice && !state.attentionExpiryRefresh) {
+                    showAttentionNotice(
+                        selectedID ?
+                        "Attention refresh failed. Selected detail remains closed to avoid showing stale data." :
+                        "Attention refresh failed. The issue lists may be incomplete; retry before relying on them.",
+                        "error",
+                    );
+                }
+                return false;
+            }
+            if (!selectedID && !selectedFamilyID) return true;
+
+            if (selectedKind === "evidence_gap") {
+                const chainReady = await loadIssuePagesForSelection(
+                    state.evidenceGaps,
+                    selectedID,
+                    selectedPageBudget,
+                );
+                if (!chainReady) return false;
+                const summary = state.evidenceGaps.data.find(
+                    (issue) => readText(issue.issue_id) === selectedID,
+                );
+                return summary ? selectIssue(summary, selectedKind, false) : true;
+            }
+
+            const chainReady = await loadFamilyPagesForSelection(
+                selectedFamilyID,
+                selectedID,
+                selectedPageBudget,
+            );
+            if (refreshGeneration !== state.attentionRefreshGeneration) return false;
+            if (!chainReady) {
+                if (!suppressFailureNotice && !state.attentionExpiryRefresh) {
+                    showAttentionNotice(
+                        "Attention refresh failed while confirming the selected finding. Its detail remains closed.",
+                        "error",
+                    );
+                }
+                return false;
+            }
+            const summary = state.issues.data.find(
+                (family) =>
+                (selectedFamilyID && readText(family.family_id) === selectedFamilyID) ||
+                (!selectedFamilyID &&
+                    readText(family.kind) === "exact_issue" &&
+                    readText(family.representative_issue_id) === selectedID),
+            );
+            if (!summary) {
+                showAttentionNotice(
+                    state.issues.hasMore ?
+                    "Attention refreshed. The selected finding was not confirmed in the refreshed loaded results; load more to find it." :
+                    "Attention refreshed. The selected finding is no longer visible under the current filters.",
+                    "status",
+                    7000,
+                );
+                return true;
+            }
+            let detailReady = false;
+            if (readText(summary.kind) === "mapped_upstream") {
+                detailReady = await selectAttentionFamily(summary, false);
+                if (detailReady && selectedID) {
+                    const memberChainReady = await loadFamilyMemberPagesForSelection(
+                        selectedID,
+                        selectedFamilyMemberPageBudget,
+                    );
+                    if (!memberChainReady) {
+                        closeFamilyDetail(false);
+                        detailReady = false;
+                    }
+                    const member = state.familyMembers.find(
+                        (value) =>
+                        readText(value.issue && value.issue.issue_id) === selectedID,
+                    );
+                    if (memberChainReady && !member) {
+                        const moreMembersRemain = state.familyMemberHasMore;
+                        closeFamilyDetail(false);
+                        showAttentionNotice(
+                            moreMembersRemain ?
+                            "Attention refreshed, but the selected item was not found in the sessions currently loaded. Reopen the finding and load more sessions to select it again." :
+                            "Attention refreshed, but the selected finding is no longer visible in this group.",
+                            "status",
+                            8000,
+                        );
+                        return true;
+                    }
+                    if (memberChainReady && member) {
+                        const returnToFamily =
+                            selectedSource === "family" &&
+                            toFiniteNumber(summary.supporting_issue_count) > 1;
+                        const returnFocus = returnToFamily ? {
+                            type: "family-member",
+                            key: familyMemberFocusKey(
+                                readText(summary.family_id),
+                                selectedID,
+                            ),
+                        } : {
+                            type: "family",
+                            familyID: readText(summary.family_id),
+                        };
+                        if (!returnToFamily) closeFamilyDetail(false);
+                        detailReady = await selectIssue(member.issue, "issue", false, {
+                            viewCursor: readCursor(member.view_cursor),
+                            catalog: member.catalog,
+                            source: returnToFamily ? "family" : "attention",
+                            familyID: readText(summary.family_id),
+                            evidenceContext: attentionFamilyEvidenceContext(summary),
+                            returnFocus,
+                        });
+                    }
+                }
+            } else {
+                detailReady = await selectIssue(
+                    exactFamilyRepresentative(summary),
+                    "issue",
+                    false, {
+                        viewCursor: readCursor(summary.view_cursor),
+                        catalog: summary.catalog,
+                        familyID: readText(summary.family_id),
+                        evidenceContext: attentionFamilyEvidenceContext(summary),
+                        returnFocus: {
+                            type: "family",
+                            familyID: readText(summary.family_id),
+                        },
+                    },
+                );
+            }
+            if (refreshGeneration !== state.attentionRefreshGeneration) return false;
+            if (!detailReady) {
+                closeIssueDetail(false);
+                if (!suppressFailureNotice && !state.attentionExpiryRefresh) {
+                    showAttentionNotice(
+                        "Attention lists refreshed, but the selected detail could not be reloaded and remains closed.",
+                        "error",
+                    );
+                }
+                return false;
+            }
+            showAttentionNotice(
+                "Attention refreshed; selected detail was reloaded from the current view.",
+                "success",
+                4000,
+            );
+            return true;
+        }
+
+        async function loadIssuePagesForSelection(bucket, issueID, pageBudget) {
+            for (let page = 1; page < pageBudget; page += 1) {
+                if (
+                    bucket.data.some((issue) => readText(issue.issue_id) === issueID) ||
+                    !bucket.hasMore
+                ) {
+                    break;
+                }
+                const pageReady = await loadIssueBucket(bucket, true);
+                if (!pageReady) return false;
+            }
+            return true;
+        }
+
+        async function loadFamilyPagesForSelection(familyID, issueID, pageBudget) {
+            for (let page = 1; page < pageBudget; page += 1) {
+                if (
+                    state.issues.data.some(
+                        (family) =>
+                        (familyID && readText(family.family_id) === familyID) ||
+                        (!familyID &&
+                            readText(family.kind) === "exact_issue" &&
+                            readText(family.representative_issue_id) === issueID),
+                    ) ||
+                    !state.issues.hasMore
+                ) {
+                    break;
+                }
+                const pageReady = await loadIssueBucket(state.issues, true);
+                if (!pageReady) return false;
+            }
+            return true;
+        }
+
+        async function loadFamilyMemberPagesForSelection(issueID, pageBudget) {
+            for (let page = 1; page < pageBudget; page += 1) {
+                if (
+                    state.familyMembers.some(
+                        (member) =>
+                        readText(member.issue && member.issue.issue_id) === issueID,
+                    ) ||
+                    !state.familyMemberHasMore
+                ) {
+                    break;
+                }
+                const pageReady = await loadAttentionFamilyDetail(true);
+                if (!pageReady) return false;
+            }
+            return true;
+        }
+
+        function resetAndLoadAttention() {
+            state.attentionRefreshGeneration += 1;
+            closeIssueDetail(false, true);
+            clearAttentionFamilyDetailState();
+            hideAttentionNotice();
+            resetIssueBucket(state.issues);
+            resetIssueBucket(state.evidenceGaps);
+            resetFixMonitoringBucket();
+            renderAttentionFilters();
+            void Promise.all([
+                loadIssueBucket(state.issues, false),
+                loadIssueBucket(state.evidenceGaps, false),
+                loadFixMonitoring(false),
+            ]);
+        }
+
+        function resetIssueBucket(bucket) {
+            bucket.requestGeneration += 1;
+            bucket.data = [];
+            bucket.nextCursor = "";
+            bucket.hasMore = false;
+            bucket.viewCursor = "";
+            bucket.analysis = null;
+            bucket.selection = null;
+            bucket.status = "idle";
+            bucket.error = null;
+        }
+
+        function resetFixMonitoringBucket(render = true) {
+            state.fixMonitoring.requestGeneration += 1;
+            state.fixMonitoring.data = [];
+            state.fixMonitoring.nextCursor = "";
+            state.fixMonitoring.hasMore = false;
+            state.fixMonitoring.viewCursor = "";
+            state.fixMonitoring.evidenceEvaluatedAt = "";
+            state.fixMonitoring.status = "idle";
+            state.fixMonitoring.error = null;
+            focusRegistry.monitoringCards.clear();
+            if (render) renderFixMonitoring();
+        }
+
+        function syncFixMonitoringFilters() {
+            state.fixMonitoringFilters.harness =
+                elements.fixMonitoringFilterHarness.value.trim();
+            state.fixMonitoringFilters.issueID =
+                elements.fixMonitoringFilterIssueID.value.trim();
+            const recordedAfter = elements.fixMonitoringFilterRecordedAfter.value;
+            if (!recordedAfter) {
+                state.fixMonitoringFilters.recordedAfter = "";
+                return;
+            }
+            const date = new Date(recordedAfter);
+            state.fixMonitoringFilters.recordedAfter = Number.isFinite(date.getTime()) ?
+                date.toISOString() :
+                "";
+        }
+
+        function renderFixMonitoringFilters() {
+            const filters = state.fixMonitoringFilters;
+            elements.fixMonitoringFilterState.value = filters.state;
+            elements.fixMonitoringFilterChangeKind.value = filters.changeKind;
+            elements.fixMonitoringFilterSeverity.value = filters.severity;
+            elements.fixMonitoringFilterHarness.value = filters.harness;
+            elements.fixMonitoringFilterIssueID.value = filters.issueID;
+            elements.fixMonitoringFilterRetracted.checked = filters.includeRetracted;
+            if (!filters.recordedAfter) {
+                elements.fixMonitoringFilterRecordedAfter.value = "";
+            }
+            elements.fixMonitoringFilterNote.textContent = filters.includeRetracted ?
+                "Including all-retracted history." :
+                "Showing active attempts.";
+        }
+
+        function resetAndLoadFixMonitoring() {
+            if (state.selectedIssueSource === "monitoring") {
+                closeIssueDetail(false);
+                showAttentionNotice(
+                    "Follow-up evidence filters changed. The prior detail was closed until a current result is selected.",
+                    "status",
+                    5000,
+                );
+            }
+            resetFixMonitoringBucket();
+            renderFixMonitoringFilters();
+            void loadFixMonitoring(false);
+        }
+
+        function buildFixMonitoringPath(cursor) {
+            const parameters = new URLSearchParams();
+            if (cursor) {
+                parameters.set("cursor", cursor);
+                return `/v1/fix-monitoring?${parameters.toString()}`;
+            }
+            const filters = state.fixMonitoringFilters;
+            parameters.set("limit", String(pageLimits.fixMonitoring.page));
+            if (filters.state) parameters.set("state", filters.state);
+            if (filters.changeKind) {
+                parameters.set("change_kind", filters.changeKind);
+            }
+            if (filters.severity) parameters.set("severity", filters.severity);
+            if (filters.harness) parameters.set("harness", filters.harness);
+            if (filters.issueID) parameters.set("issue_id", filters.issueID);
+            if (filters.recordedAfter) {
+                parameters.set("recorded_after", filters.recordedAfter);
+            }
+            if (filters.includeRetracted) {
+                parameters.set("include_retracted", "true");
+            }
+            return `/v1/fix-monitoring?${parameters.toString()}`;
+        }
+
+        async function loadFixMonitoring(append) {
+            const bucket = state.fixMonitoring;
+            if (append && (!bucket.hasMore || !bucket.nextCursor)) return false;
+            const generation = ++bucket.requestGeneration;
+            const cursor = append ? bucket.nextCursor : "";
+            bucket.status = append ? "loading-more" : "loading";
+            bucket.error = null;
+            renderFixMonitoring();
+            try {
+                const response = await apiGet(buildFixMonitoringPath(cursor));
+                requireFixMonitoringSchema(response);
+                if (generation !== bucket.requestGeneration) return false;
+                const page = Array.isArray(response.data) ?
+                    response.data.filter(
+                        (entry) =>
+                        isRecord(entry) &&
+                        readText(entry.issue_id) &&
+                        readText(entry.annotation_id),
+                    ) : [];
+                const data =
+                    append && cursor ?
+                    deduplicateByID(bucket.data.concat(page), "issue_id") :
+                    deduplicateByID(page, "issue_id");
+                const nextCursor = readCursor(response.next_cursor);
+                if (response.has_more === true && !nextCursor) {
+                    throw new Error(
+                        "Local API returned monitoring pagination without a cursor.",
+                    );
+                }
+                const viewCursor = readCursor(response.monitoring_view_cursor);
+                if (!viewCursor) {
+                    throw new Error(
+                        "Local API returned monitoring results without a view cursor.",
+                    );
+                }
+                bucket.data = data;
+                bucket.nextCursor = nextCursor;
+                bucket.hasMore = Boolean(nextCursor);
+                bucket.viewCursor = viewCursor;
+                bucket.evidenceEvaluatedAt = readText(response.evidence_evaluated_at);
+                bucket.status = "ready";
+                renderFixMonitoring();
+                return true;
+            } catch (error) {
+                if (generation !== bucket.requestGeneration) return false;
+                if (isCursorExpired(error) && append) {
+                    const closedSelectedMonitoringDetail =
+                        state.selectedIssueSource === "monitoring";
+                    if (closedSelectedMonitoringDetail) {
+                        state.attentionRefreshGeneration += 1;
+                        closeIssueDetail(false);
+                    }
+                    resetFixMonitoringBucket();
+                    const refreshed = await loadFixMonitoring(false);
+                    bucket.error = refreshed ?
+                        closedSelectedMonitoringDetail ?
+                        "The saved After attempts view was out of date. It was refreshed, and the open detail was closed." :
+                        "The saved After attempts view was out of date and has been refreshed." :
+                        "The saved After attempts view was out of date and could not be refreshed.";
+                    renderFixMonitoring();
+                    return refreshed;
+                }
+                bucket.status = "error";
+                bucket.error = fixMonitoringErrorMessage(error);
+                renderFixMonitoring();
+                return false;
+            }
+        }
+
+        function fixMonitoringErrorMessage(error) {
+            if (error instanceof LocalAPIError && error.status === 503) {
+                if (error.problemType === "belay.local/monitoring-catchup-in-progress") {
+                    return "Follow-up evidence is catching up. Findings, evidence gaps, sessions, and recorded changes remain available.";
+                }
+                if (error.problemType === "belay.local/monitoring-catchup-failed") {
+                    return "Follow-up evidence could not finish updating. Restart or retry Belay Local; other views remain available.";
+                }
+            }
+            if (isCursorExpired(error)) {
+                return "The saved After attempts view is out of date. Refresh it.";
+            }
+            return "Follow-up evidence could not be loaded. Other Local views remain available.";
+        }
+
+        function renderFixMonitoring() {
+            const bucket = state.fixMonitoring;
+            focusRegistry.monitoringCards.clear();
+            const fragment = document.createDocumentFragment();
+            bucket.data.forEach((summary) => {
+                fragment.append(createFixMonitoringCard(summary));
+            });
+            elements.fixMonitoringList.replaceChildren(fragment);
+            elements.fixMonitoringCount.textContent =
+                bucket.status === "ready" ? formatNumber(bucket.data.length) : "—";
+            elements.fixMonitoringLoading.hidden = bucket.status !== "loading";
+            elements.fixMonitoringEmpty.hidden =
+                bucket.status !== "ready" || bucket.data.length !== 0;
+            elements.fixMonitoringEmptyTitle.textContent = state.fixMonitoringFilters
+                .includeRetracted ?
+                "No monitored attempt history matches these filters" :
+                "No active monitored attempts match these filters";
+            elements.fixMonitoringEmptyDetail.textContent =
+                "Recording an attempt is optional. Belay checks later activity only after you record one.";
+            elements.fixMonitoringPagination.hidden = !bucket.hasMore;
+            elements.fixMonitoringLoadMore.disabled = bucket.status === "loading-more";
+            elements.fixMonitoringPageStatus.textContent = bucket.hasMore ?
+                `Showing ${bucket.data.length}; more monitored findings are available.` :
+                `Showing ${bucket.data.length} monitored ${
           bucket.data.length === 1 ? "finding" : "findings"
         }.`;
-    elements.fixMonitoringStatus.hidden = !bucket.error;
-    elements.fixMonitoringStatus.textContent = bucket.error || "";
-    elements.fixMonitoringStatus.dataset.tone =
-      bucket.status === "error" ? "error" : "status";
-    elements.fixMonitoringSection.hidden =
-      bucket.status === "ready" &&
-      bucket.data.length === 0 &&
-      !fixMonitoringFiltersActive();
-  }
+            elements.fixMonitoringStatus.hidden = !bucket.error;
+            elements.fixMonitoringStatus.textContent = bucket.error || "";
+            elements.fixMonitoringStatus.dataset.tone =
+                bucket.status === "error" ? "error" : "status";
+            elements.fixMonitoringSection.hidden =
+                bucket.status === "ready" &&
+                bucket.data.length === 0 &&
+                !fixMonitoringFiltersActive();
+        }
 
-  function fixMonitoringFiltersActive() {
-    const filters = state.fixMonitoringFilters;
-    return Boolean(
-      filters.state ||
-        filters.changeKind ||
-        filters.severity ||
-        filters.harness ||
-        filters.issueID ||
-        filters.recordedAfter ||
-        filters.includeRetracted,
-    );
-  }
+        function fixMonitoringFiltersActive() {
+            const filters = state.fixMonitoringFilters;
+            return Boolean(
+                filters.state ||
+                filters.changeKind ||
+                filters.severity ||
+                filters.harness ||
+                filters.issueID ||
+                filters.recordedAfter ||
+                filters.includeRetracted,
+            );
+        }
 
-  function createFixMonitoringCard(summary) {
-    const issueID = readText(summary.issue_id);
-    const annotationID = readText(summary.annotation_id);
-    const article = createElement("article", "issue-card monitoring-card");
-    const button = createElement("button", "issue-card-main");
-    button.type = "button";
-    const stateEntry = fixMonitoringStateEntry(
-      summary.fix_recurrence_state,
-    );
-    button.dataset.monitoringTone = stateEntry.tone;
-    const catalog = monitoringSubjectCatalog(summary);
-    const header = createElement("span", "issue-card-top");
-    header.append(
-      createElement("strong", "", catalog.title),
-      createToneBadge(summary.severity),
-    );
-    const category = fixChangeCatalogEntry(summary.change_kind);
-    const metadata = createElement("span", "issue-card-meta");
-    const activeAttempts = toOptionalCount(summary.active_attempt_count);
-    const observedAttempts = toOptionalCount(
-      summary.observed_attempt_count,
-    );
-    const sameSession = toOptionalCount(
-      summary.same_anchor_session_observation_count,
-    );
-    const otherSessions = toOptionalCount(
-      summary.other_session_observation_count,
-    );
-    metadata.append(
-      createElement("span", "", category.label),
-      createElement(
-        "span",
-        "",
-        `${
+        function createFixMonitoringCard(summary) {
+            const issueID = readText(summary.issue_id);
+            const annotationID = readText(summary.annotation_id);
+            const article = createElement("article", "issue-card monitoring-card");
+            const button = createElement("button", "issue-card-main");
+            button.type = "button";
+            const stateEntry = fixMonitoringStateEntry(summary.fix_recurrence_state);
+            button.dataset.monitoringTone = stateEntry.tone;
+            const catalog = monitoringSubjectCatalog(summary);
+            const header = createElement("span", "issue-card-top");
+            header.append(
+                createElement("strong", "", catalog.title),
+                createToneBadge(summary.severity),
+            );
+            const category = fixChangeCatalogEntry(summary.change_kind);
+            const metadata = createElement("span", "issue-card-meta");
+            const activeAttempts = toOptionalCount(summary.active_attempt_count);
+            const observedAttempts = toOptionalCount(summary.observed_attempt_count);
+            const sameSession = toOptionalCount(
+                summary.same_anchor_session_observation_count,
+            );
+            const otherSessions = toOptionalCount(
+                summary.other_session_observation_count,
+            );
+            metadata.append(
+                    createElement("span", "", category.label),
+                    createElement(
+                        "span",
+                        "",
+                        `${
           activeAttempts === null
             ? "Active attempt count unavailable"
             : `${formatNumber(activeAttempts)} active`
@@ -4255,9 +4172,7 @@
     const issueID = readText(summary && summary.issue_id);
     const annotationID = readText(summary && summary.annotation_id);
     if (!issueID || !annotationID) return Promise.resolve(false);
-    const monitoringViewCursor = readCursor(
-      state.fixMonitoring.viewCursor,
-    );
+    const monitoringViewCursor = readCursor(state.fixMonitoring.viewCursor);
     if (!monitoringViewCursor) {
       state.fixMonitoring.status = "error";
       state.fixMonitoring.error =
@@ -4313,9 +4228,7 @@
     ) {
       return Promise.resolve(false);
     }
-    const monitoringViewCursor = readCursor(
-      state.fixMonitoring.viewCursor,
-    );
+    const monitoringViewCursor = readCursor(state.fixMonitoring.viewCursor);
     if (!monitoringViewCursor) {
       state.fixHistoryStale = true;
       state.fixHistoryError =
@@ -4676,8 +4589,7 @@
   }
 
   function renderAttentionFilters() {
-    const selection =
-      state.issues.selection || expectedIssueSelection("issue");
+    const selection = state.issues.selection || expectedIssueSelection("issue");
     const experimental =
       selection.includes_experimental === true ||
       state.issueFilters.experimental;
@@ -4696,21 +4608,18 @@
   function attentionFiltersActive() {
     return (
       state.issueFilters.experimental ||
-      [
-        "severity",
-        "harness",
-        "origin",
-        "analysisStatus",
-      ].some((key) => Boolean(state.issueFilters[key]))
+      ["severity", "harness", "origin", "analysisStatus"].some((key) =>
+        Boolean(state.issueFilters[key]),
+      )
     );
   }
 
   function occurrenceFiltersActive() {
     return Boolean(
       state.issueFilters.harness ||
-        state.issueFilters.analysisStatus ||
-        state.issueFilters.severity ||
-        state.issueFilters.origin,
+      state.issueFilters.analysisStatus ||
+      state.issueFilters.severity ||
+      state.issueFilters.origin,
     );
   }
 
@@ -4762,7 +4671,8 @@
       }
       void selectAttentionFamily(family, true);
     });
-    if (familyID) focusRegistry.familyCards.set(familyFocusKey(familyID), button);
+    if (familyID)
+      focusRegistry.familyCards.set(familyFocusKey(familyID), button);
 
     const top = createElement("span", "issue-card-top");
     const severity = createElement(
@@ -4773,11 +4683,7 @@
     severity.dataset.tone = severityTone(family.severity);
     const title = createElement("span", "issue-card-title");
     title.append(
-      createElement(
-        "strong",
-        "",
-        readText(catalog.display_title) || "Finding",
-      ),
+      createElement("strong", "", readText(catalog.display_title) || "Finding"),
       createElement("small", "", attentionFamilyObservationSummary(family)),
     );
     top.append(severity, title);
@@ -4856,11 +4762,7 @@
     };
   }
 
-  async function selectAttentionFamily(
-    family,
-    moveFocus,
-    revealDetail = true,
-  ) {
+  async function selectAttentionFamily(family, moveFocus, revealDetail = true) {
     const familyID = readText(family && family.family_id);
     const viewCursor = readCursor(family && family.view_cursor);
     if (
@@ -4883,10 +4785,7 @@
     elements.attentionWelcome.hidden = revealDetail;
     elements.issueDetail.hidden = true;
     elements.familyDetail.hidden = !revealDetail;
-    document.body.classList.toggle(
-      "is-attention-detail-open",
-      revealDetail,
-    );
+    document.body.classList.toggle("is-attention-detail-open", revealDetail);
     renderIssueBucket(state.issues);
     renderAttentionFamilyDetail();
     applyPaneAccessibility();
@@ -4906,10 +4805,7 @@
       );
       return false;
     }
-    if (
-      state.familyMembers.length !== 1 ||
-      state.familyMemberHasMore
-    ) {
+    if (state.familyMembers.length !== 1 || state.familyMemberHasMore) {
       elements.attentionWelcome.hidden = true;
       elements.familyDetail.hidden = false;
       document.body.classList.add("is-attention-detail-open");
@@ -4997,9 +4893,7 @@
         !responseViewCursor ||
         responseViewCursor !== state.selectedFamilyViewCursor
       ) {
-        throw new Error(
-          "Local API changed the Attention family view cursor.",
-        );
+        throw new Error("Local API changed the Attention family view cursor.");
       }
       const members = Array.isArray(payload.members) ? payload.members : [];
       members.forEach(requireAttentionFamilyMember);
@@ -5116,8 +5010,7 @@
     elements.familyMembersLoading.hidden =
       state.familyMemberStatus !== "loading";
     elements.familyMembersEmpty.hidden =
-      state.familyMemberStatus !== "ready" ||
-      state.familyMembers.length !== 0;
+      state.familyMemberStatus !== "ready" || state.familyMembers.length !== 0;
     elements.familyMemberCount.textContent = state.familyMemberHasMore
       ? `${state.familyMembers.length}+`
       : String(state.familyMembers.length);
@@ -5185,9 +5078,7 @@
         catalog: member.catalog,
         source: "family",
         familyID,
-        evidenceContext: attentionFamilyEvidenceContext(
-          state.selectedFamily,
-        ),
+        evidenceContext: attentionFamilyEvidenceContext(state.selectedFamily),
         returnFocus: { type: "family-member", key },
       });
     });
@@ -5252,11 +5143,7 @@
     const catalog = issueDisplayCatalog(issue);
     title.append(
       createElement("strong", "", catalog.title),
-      createElement(
-        "small",
-        "",
-        issueRecurrenceLabel(issue),
-      ),
+      createElement("small", "", issueRecurrenceLabel(issue)),
     );
     top.append(severity, title);
     const status = normalizeAnalysisStatus(issue.analysis_status);
@@ -5277,15 +5164,12 @@
         }`,
       ),
       createElement("span", "", issueHarnessLabel(issue.harnesses)),
-      createElement(
-        "time",
-        "",
-        formatRelativeTime(issue.last_observed_at),
-      ),
+      createElement("time", "", formatRelativeTime(issue.last_observed_at)),
     );
     button.append(top, meta);
     const caveat = issueCaveat(issue);
-    if (caveat) button.append(createElement("span", "issue-card-caveat", caveat));
+    if (caveat)
+      button.append(createElement("span", "issue-card-caveat", caveat));
     button.append(
       createElement(
         "span",
@@ -5307,7 +5191,8 @@
     if (!issueID) return Promise.resolve(false);
     if (moveFocus) state.attentionRefreshGeneration += 1;
     state.selectedIssueID = issueID;
-    state.selectedIssueKind = kind === "evidence_gap" ? "evidence_gap" : "issue";
+    state.selectedIssueKind =
+      kind === "evidence_gap" ? "evidence_gap" : "issue";
     state.selectedIssueSource =
       options.source === "family" ? "family" : "attention";
     state.selectedIssueFamilyID = readText(options.familyID);
@@ -5395,10 +5280,7 @@
           "Local API returned issue detail without a view cursor.",
         );
       }
-      if (
-        cursor &&
-        responseViewCursor !== state.selectedIssueViewCursor
-      ) {
+      if (cursor && responseViewCursor !== state.selectedIssueViewCursor) {
         throw new Error(
           "Local API changed the issue-detail view cursor during continuation.",
         );
@@ -5415,8 +5297,7 @@
       );
       const globalCoverage = readGlobalAnalysisCoverage(
         response.global_analysis_coverage,
-        state.selectedGlobalAnalysisCoverage ||
-          selectedIssueListCoverage(),
+        state.selectedGlobalAnalysisCoverage || selectedIssueListCoverage(),
       );
       state.selectedIssue = issue;
       state.selectedIssueCatalog = catalog;
@@ -5425,10 +5306,7 @@
       state.selectedIssueViewCursor = responseViewCursor;
       state.occurrences =
         append && cursor
-          ? deduplicateByID(
-              state.occurrences.concat(page),
-              "occurrence_id",
-            )
+          ? deduplicateByID(state.occurrences.concat(page), "occurrence_id")
           : deduplicateByID(page, "occurrence_id");
       state.occurrenceNextCursor = pagination.nextCursor;
       state.occurrenceHasMore = pagination.hasMore;
@@ -5629,16 +5507,14 @@
       state.selectedIssueSource === "family"
         ? issueDetailCatalog(issue, state.selectedIssueCatalog)
         : monitoringSubjectCatalog(issue);
-    const historyOnly =
-      state.fixHistoryCurrentIssueAvailable === false;
+    const historyOnly = state.fixHistoryCurrentIssueAvailable === false;
     const currentProjectionPending =
       state.selectedIssueSource === "monitoring" &&
       state.fixHistoryCurrentIssueAvailable === null;
-    const kind =
-      historyOnly
-        ? "Retained attempt history"
-        : currentProjectionPending
-          ? "Follow-up evidence"
+    const kind = historyOnly
+      ? "Retained attempt history"
+      : currentProjectionPending
+        ? "Follow-up evidence"
         : state.selectedIssueKind === "evidence_gap"
           ? "Evidence gap"
           : reducedApprovalMode
@@ -5659,20 +5535,17 @@
       state.selectedGlobalAnalysisCoverage,
     );
     const analysisQualifier = analysisQualifiers[status] || "";
-    elements.issueAnalysisQualifier.textContent =
-      historyOnly
-        ? "This finding is no longer in the current results. Its recorded attempt history remains available."
-        : currentProjectionPending
-          ? "Checking whether this finding is still current."
-          : [analysisQualifier, coverageQualifier].filter(Boolean).join(" ");
+    elements.issueAnalysisQualifier.textContent = historyOnly
+      ? "This finding is no longer in the current results. Its recorded attempt history remains available."
+      : currentProjectionPending
+        ? "Checking whether this finding is still current."
+        : [analysisQualifier, coverageQualifier].filter(Boolean).join(" ");
     elements.issueScopeDisclosure.textContent = historyOnly
       ? "New attempt recording and supporting sessions are unavailable because this finding is no longer current."
       : currentProjectionPending
         ? "Loading attempt history from the saved After attempts view."
         : issueScopeDisclosure(issue, catalog.caveat);
-    const badges = [
-      createToneBadge(issue.severity),
-    ];
+    const badges = [createToneBadge(issue.severity)];
     if (!historyOnly && !currentProjectionPending) {
       if (!reducedApprovalMode) {
         badges.push(
@@ -5753,10 +5626,8 @@
   function issueNextActionLabel(action) {
     const labels = {
       inspect_cited_events: "Next: inspect the cited events.",
-      inspect_matching_sessions:
-        "Next: compare the related sessions.",
-      inspect_verification_events:
-        "Next: inspect the verification evidence.",
+      inspect_matching_sessions: "Next: compare the related sessions.",
+      inspect_verification_events: "Next: inspect the verification evidence.",
       review_agent_permissions:
         "Review the current agent permission mode. If this was intentional, no change may be needed.",
     };
@@ -5779,30 +5650,25 @@
   }
 
   function renderIssueMetadata(issue) {
-    if (
-      isReducedApprovalIssueContext(issue, state.selectedIssueCatalog)
-    ) {
+    if (isReducedApprovalIssueContext(issue, state.selectedIssueCatalog)) {
       elements.issueMetadata.replaceChildren();
       return;
     }
     const metadata = [
       ["Observed", retainedInterval(issue)],
       ["Confidence", readableLabel(issue.confidence, "Unavailable")],
-      [
-        "Project relationship",
-        projectRelationshipLabel(issue.scope_quality),
-      ],
+      ["Project relationship", projectRelationshipLabel(issue.scope_quality)],
       ["Source", issueSourceLabel(issue.origin)],
       ["Check version", detectorVersionLabel(issue)],
-      [
-        "Evidence",
-        evidenceCompletenessLabel(issue.evidence_complete),
-      ],
+      ["Evidence", evidenceCompletenessLabel(issue.evidence_complete)],
     ];
     const fragment = document.createDocumentFragment();
     metadata.forEach(([label, value]) => {
       const row = createElement("div");
-      row.append(createElement("dt", "", label), createElement("dd", "", value));
+      row.append(
+        createElement("dt", "", label),
+        createElement("dd", "", value),
+      );
       fragment.append(row);
     });
     elements.issueMetadata.replaceChildren(fragment);
@@ -5876,9 +5742,7 @@
         reason: readText(eligibility.reason),
         actionToken: readText(eligibility.action_token),
         expiresAt: readText(eligibility.expires_at),
-        changeCatalogVersion: readText(
-          eligibility.change_catalog_version,
-        ),
+        changeCatalogVersion: readText(eligibility.change_catalog_version),
       };
       state.fixEligibilityStatus = "ready";
       renderFixAttempts();
@@ -5945,9 +5809,7 @@
       const issue = response.data.issue;
       const viewCursor = readCursor(response.view_cursor);
       if (readText(issue.issue_id) !== issueID || !viewCursor) {
-        throw new Error(
-          "Local API did not return a current issue snapshot.",
-        );
+        throw new Error("Local API did not return a current issue snapshot.");
       }
       state.selectedIssue = issue;
       renderIssueDetail();
@@ -6001,14 +5863,12 @@
         return false;
       }
       const evaluatedAt = readText(response.evidence_evaluated_at);
-      const currentIssueAvailable =
-        response.current_issue_available === true;
+      const currentIssueAvailable = response.current_issue_available === true;
       const currentIssue = response.current_issue;
       if (
         (currentIssueAvailable && !isRecord(currentIssue)) ||
         (!currentIssueAvailable && currentIssue !== null) ||
-        (currentIssueAvailable &&
-          readText(currentIssue.issue_id) !== issueID)
+        (currentIssueAvailable && readText(currentIssue.issue_id) !== issueID)
       ) {
         throw new Error(
           "Local API returned an invalid current-issue monitoring state.",
@@ -6029,25 +5889,18 @@
         : [];
       const history =
         append && cursor
-          ? deduplicateByID(
-              state.fixHistory.concat(page),
-              "annotation_id",
-            )
+          ? deduplicateByID(state.fixHistory.concat(page), "annotation_id")
           : deduplicateByID(page, "annotation_id");
       const nextCursor = readCursor(response.next_cursor);
       if (append && nextCursor && nextCursor === cursor) {
-        throw new Error(
-          "Local API returned a non-advancing attempt cursor.",
-        );
+        throw new Error("Local API returned a non-advancing attempt cursor.");
       }
       if (response.has_more === true && !nextCursor) {
         throw new Error(
           "Local API returned attempt pagination without a cursor.",
         );
       }
-      const monitoringViewCursor = readCursor(
-        response.monitoring_view_cursor,
-      );
+      const monitoringViewCursor = readCursor(response.monitoring_view_cursor);
       if (!monitoringViewCursor) {
         throw new Error(
           "Local API returned attempt monitoring without a view cursor.",
@@ -6080,8 +5933,7 @@
                     readText(attempt.annotation_id) ===
                     state.selectedDrivingAnnotationID,
                 ) || state.fixHistory[0],
-              ) ||
-              state.selectedIssue;
+              ) || state.selectedIssue;
           }
           state.occurrenceRequestGeneration += 1;
           state.occurrenceStatus = "unavailable";
@@ -6095,8 +5947,7 @@
       if (
         focusAnnotationID &&
         !state.fixHistory.some(
-          (attempt) =>
-            readText(attempt.annotation_id) === focusAnnotationID,
+          (attempt) => readText(attempt.annotation_id) === focusAnnotationID,
         ) &&
         state.fixHistoryHasMore &&
         state.fixHistoryNextCursor
@@ -6140,9 +5991,7 @@
 
   async function recoverExpiredFixMonitoringDetail(issueID, append) {
     if (issueID !== state.selectedIssueID) return false;
-    const expiredSurface = append
-      ? "Attempt pagination"
-      : "Attempt detail";
+    const expiredSurface = append ? "Attempt pagination" : "Attempt detail";
     state.attentionRefreshGeneration += 1;
     resetFixMonitoringBucket(false);
     closeIssueDetail(false);
@@ -6169,13 +6018,7 @@
     ) {
       return;
     }
-    void loadFixMonitoringDetail(
-      state.selectedIssueID,
-      true,
-      "",
-      true,
-      "",
-    );
+    void loadFixMonitoringDetail(state.selectedIssueID, true, "", true, "");
   }
 
   function renderFixAttempts() {
@@ -6204,8 +6047,7 @@
       state.fixHistoryCurrentIssueAvailable === false ||
       (state.selectedIssueSource === "monitoring" &&
         state.fixHistoryCurrentIssueAvailable === null);
-    const catalogReady =
-      eligibility.changeCatalogVersion === "fix-change.v1";
+    const catalogReady = eligibility.changeCatalogVersion === "fix-change.v1";
     const canRecord =
       !monitoringCurrentIssueUnavailable &&
       (canResume ||
@@ -6267,8 +6109,9 @@
       (state.fixHistoryStale
         ? "Attempt monitoring may be stale. Other issue detail remains available."
         : "");
-    elements.fixMonitoringDetailStatus.dataset.tone =
-      state.fixHistoryError ? "error" : "status";
+    elements.fixMonitoringDetailStatus.dataset.tone = state.fixHistoryError
+      ? "error"
+      : "status";
     renderFixActionStatus();
     renderFixHistory();
   }
@@ -6301,8 +6144,7 @@
       fragment.append(createFixHistoryRow(annotation));
     });
     elements.fixHistoryList.replaceChildren(fragment);
-    elements.fixHistoryLoading.hidden =
-      state.fixHistoryStatus !== "loading";
+    elements.fixHistoryLoading.hidden = state.fixHistoryStatus !== "loading";
     elements.fixHistoryEmpty.hidden =
       state.fixHistoryStatus !== "ready" || state.fixHistory.length !== 0;
     if (state.fixHistoryStatus === "error" && state.fixHistory.length === 0) {
@@ -6347,11 +6189,7 @@
     const title = createElement("div");
     title.append(
       createElement("strong", "", category.label),
-      createElement(
-        "small",
-        "",
-        monitoringSubjectCatalog(annotation).title,
-      ),
+      createElement("small", "", monitoringSubjectCatalog(annotation).title),
     );
     const badges = createElement("div", "fix-history-badges");
     const stateBadge = createElement(
@@ -6439,9 +6277,7 @@
       status,
       metadata,
     );
-    if (
-      toOptionalCount(annotation.same_anchor_session_observation_count) > 0
-    ) {
+    if (toOptionalCount(annotation.same_anchor_session_observation_count) > 0) {
       row.append(
         createElement(
           "p",
@@ -6489,9 +6325,7 @@
       );
     }
     const actions = createElement("div", "fix-history-actions");
-    const observationCount = toOptionalCount(
-      annotation.fix_recurrence_count,
-    );
+    const observationCount = toOptionalCount(annotation.fix_recurrence_count);
     const observationCursor = readCursor(annotation.observation_view_cursor);
     if (
       observationCount !== null &&
@@ -6522,11 +6356,7 @@
       monitoringState !== "unknown" &&
       annotationID
     ) {
-      const retract = createElement(
-        "button",
-        "secondary-button",
-        "Retract",
-      );
+      const retract = createElement("button", "secondary-button", "Retract");
       retract.type = "button";
       retract.addEventListener("click", () => {
         openFixRetractionDialog(annotationID);
@@ -6628,10 +6458,7 @@
     if (page.expanded) {
       page.expanded = false;
       renderFixHistory();
-      restoreLogicalFocus(
-        { type: "fix-history", annotationID },
-        button,
-      );
+      restoreLogicalFocus({ type: "fix-history", annotationID }, button);
       return;
     }
     page.expanded = true;
@@ -6666,10 +6493,7 @@
     const viewCursor = readCursor(annotation.observation_view_cursor);
     if (!issueID || !annotationID) return false;
     const pageState = getFixObservationPage(annotationID);
-    if (
-      append &&
-      (!pageState.hasMore || !pageState.nextCursor)
-    ) {
+    if (append && (!pageState.hasMore || !pageState.nextCursor)) {
       return false;
     }
     const generation = ++pageState.requestGeneration;
@@ -6718,10 +6542,7 @@
         : [];
       pageState.data =
         append && pageState.nextCursor
-          ? deduplicateByID(
-              pageState.data.concat(rows),
-              "recurrence_id",
-            )
+          ? deduplicateByID(pageState.data.concat(rows), "recurrence_id")
           : deduplicateByID(rows, "recurrence_id");
       pageState.nextCursor = readCursor(response.next_cursor);
       if (response.has_more === true && !pageState.nextCursor) {
@@ -6764,20 +6585,14 @@
       );
     }
     if (page.error) {
-      const error = createElement(
-        "p",
-        "monitoring-status",
-        page.error,
-      );
+      const error = createElement("p", "monitoring-status", page.error);
       error.dataset.tone = "error";
       error.setAttribute("role", "status");
       section.append(error);
       const retry = createElement(
         "button",
         "secondary-button",
-        page.expired
-          ? "Reload attempt monitoring"
-          : "Retry observations",
+        page.expired ? "Reload attempt monitoring" : "Retry observations",
       );
       retry.type = "button";
       retry.addEventListener("click", () => {
@@ -6839,9 +6654,7 @@
         "span",
         "fix-evidence-badge",
         fixEvidenceStatusLabel(
-          normalizeFixEvidenceStatus(
-            observation.evidence_currently_retained,
-          ),
+          normalizeFixEvidenceStatus(observation.evidence_currently_retained),
         ),
       ),
     );
@@ -6876,8 +6689,7 @@
     appendFixMetadata(
       metadata,
       "Observation recorded",
-      formatFullDate(parseDate(observation.observed_at)) ||
-        "Time unavailable",
+      formatFullDate(parseDate(observation.observed_at)) || "Time unavailable",
     );
     appendObservationEvidenceMetadata(metadata, observation);
     article.append(header, metadata);
@@ -6970,9 +6782,8 @@
 
   function recurrenceEventIDs(observation) {
     if (
-      normalizeFixEvidenceStatus(
-        observation.evidence_currently_retained,
-      ) === "unknown"
+      normalizeFixEvidenceStatus(observation.evidence_currently_retained) ===
+      "unknown"
     ) {
       return [];
     }
@@ -7027,10 +6838,7 @@
 
   function appendFixMetadata(list, label, value) {
     const item = createElement("div");
-    item.append(
-      createElement("dt", "", label),
-      createElement("dd", "", value),
-    );
+    item.append(createElement("dt", "", label), createElement("dd", "", value));
     list.append(item);
   }
 
@@ -7104,10 +6912,14 @@
 
   function fixEvidenceStatusExplanation(status) {
     const explanations = {
-      available: "All events cited when this attempt was recorded are still stored.",
-      partial: "Some events cited when this attempt was recorded are still stored.",
-      pruned: "The events cited when this attempt was recorded are no longer stored.",
-      unknown: "Belay could not determine whether the originally cited events are still stored.",
+      available:
+        "All events cited when this attempt was recorded are still stored.",
+      partial:
+        "Some events cited when this attempt was recorded are still stored.",
+      pruned:
+        "The events cited when this attempt was recorded are no longer stored.",
+      unknown:
+        "Belay could not determine whether the originally cited events are still stored.",
     };
     return explanations[status] || explanations.unknown;
   }
@@ -7218,11 +7030,7 @@
     ) {
       return;
     }
-    closeModalLayer(
-      "fix-attempt",
-      elements.fixAttemptModalLayer,
-      restoreFocus,
-    );
+    closeModalLayer("fix-attempt", elements.fixAttemptModalLayer, restoreFocus);
     hideModalAlert(elements.fixAttemptAlert);
   }
 
@@ -7360,9 +7168,7 @@
       );
       requireFixSchema(response);
       const annotation = isRecord(response.data) ? response.data : null;
-      const annotationID = readText(
-        annotation && annotation.annotation_id,
-      );
+      const annotationID = readText(annotation && annotation.annotation_id);
       if (
         !annotationID ||
         readText(annotation.issue_id) !== issueID ||
@@ -7416,7 +7222,8 @@
     if (
       !state.selectedIssueID ||
       !annotationID ||
-      normalizeFixAnnotationState(annotation && annotation.state) !== "active" ||
+      normalizeFixAnnotationState(annotation && annotation.state) !==
+        "active" ||
       normalizeFixRecurrenceState(
         annotation && annotation.fix_recurrence_state,
       ) === "unknown"
@@ -7431,10 +7238,7 @@
     state.activeModal = "fix-retraction";
     hideModalAlert(elements.fixRetractionAlert);
     syncFixRetractionDialog();
-    const draft = getFixRetractionDraft(
-      state.selectedIssueID,
-      annotationID,
-    );
+    const draft = getFixRetractionDraft(state.selectedIssueID, annotationID);
     const selected = elements.fixRetractionOptions.querySelector(
       'input[name="fix-retraction-reason"]:checked',
     );
@@ -7550,9 +7354,8 @@
 
   function fixRetractionReasonEntry(value) {
     return (
-      fixRetractionCatalog.find(
-        (entry) => entry.value === readText(value),
-      ) || null
+      fixRetractionCatalog.find((entry) => entry.value === readText(value)) ||
+      null
     );
   }
 
@@ -7607,9 +7410,7 @@
         throw new Error("Local API returned an invalid retraction response.");
       }
       const replayed = response.replayed === true;
-      fixRetractionDrafts.delete(
-        fixRetractionDraftKey(issueID, annotationID),
-      );
+      fixRetractionDrafts.delete(fixRetractionDraftKey(issueID, annotationID));
       state.fixActionMessage = replayed
         ? "Previously recorded retraction restored; no duplicate created."
         : "Attempt record retracted. The original attempt remains in history.";
@@ -7794,11 +7595,11 @@
         ? elements.missionPackDialog
         : state.activeModal === "update"
           ? elements.updateDialog
-        : state.activeModal === "report-evidence"
-        ? elements.reportEvidenceDialog
-        : state.activeModal === "fix-attempt"
-          ? elements.fixAttemptDialog
-          : elements.fixRetractionDialog;
+          : state.activeModal === "report-evidence"
+            ? elements.reportEvidenceDialog
+            : state.activeModal === "fix-attempt"
+              ? elements.fixAttemptDialog
+              : elements.fixRetractionDialog;
     const focusable = Array.from(
       dialog.querySelectorAll(
         'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -7827,8 +7628,7 @@
       fragment.append(createOccurrenceRow(occurrence));
     });
     elements.occurrenceList.replaceChildren(fragment);
-    elements.occurrencesLoading.hidden =
-      state.occurrenceStatus !== "loading";
+    elements.occurrencesLoading.hidden = state.occurrenceStatus !== "loading";
     elements.occurrenceCount.textContent = state.occurrenceHasMore
       ? `${state.occurrences.length}+`
       : String(state.occurrences.length);
@@ -7840,10 +7640,7 @@
       : `Showing ${state.occurrences.length} related ${
           state.occurrences.length === 1 ? "session" : "sessions"
         }.`;
-    if (
-      state.occurrenceStatus === "ready" &&
-      state.occurrences.length === 0
-    ) {
+    if (state.occurrenceStatus === "ready" && state.occurrences.length === 0) {
       elements.occurrenceList.append(
         createElement(
           "p",
@@ -7951,10 +7748,7 @@
         createElement(
           "p",
           "overview-empty",
-          customerErrorMessage(
-            error,
-            "Cited events could not be loaded.",
-          ),
+          customerErrorMessage(error, "Cited events could not be loaded."),
         ),
       );
     } finally {
@@ -7964,7 +7758,8 @@
 
   function renderOccurrenceEvidence(container, response, requestedFallback) {
     const events = Array.isArray(response.data) ? response.data : [];
-    const requested = toFiniteNumber(response.requested_count) || requestedFallback;
+    const requested =
+      toFiniteNumber(response.requested_count) || requestedFallback;
     const found = toFiniteNumber(response.found_count) || events.length;
     const missing = Number.isFinite(Number(response.missing_count))
       ? toFiniteNumber(response.missing_count)
@@ -7999,11 +7794,7 @@
     const descriptor = eventDescriptor(observation, evidenceContext);
     const row = createElement("article", "lookup-event");
     row.append(
-      createElement(
-        "strong",
-        "",
-        descriptor.label,
-      ),
+      createElement("strong", "", descriptor.label),
       createElement(
         "time",
         "",
@@ -8012,9 +7803,7 @@
       createElement(
         "p",
         "",
-        descriptor.detail ||
-          readText(observation.type) ||
-          "Retained event",
+        descriptor.detail || readText(observation.type) || "Retained event",
       ),
     );
     return row;
@@ -8027,9 +7816,7 @@
       returnFocus &&
       ["brief-action", "brief-session"].includes(returnFocus.type);
     const returnToDiagnosis =
-      !forceList &&
-      returnFocus &&
-      returnFocus.type === "diagnosis-action";
+      !forceList && returnFocus && returnFocus.type === "diagnosis-action";
     const returnToFamily =
       !forceList &&
       !returnToBrief &&
@@ -8060,7 +7847,8 @@
     state.issueReturnFocus = null;
     elements.issueDetail.hidden = true;
     elements.familyDetail.hidden = !returnToFamily;
-    elements.attentionWelcome.hidden = returnToFamily || Boolean(state.selectedFamily);
+    elements.attentionWelcome.hidden =
+      returnToFamily || Boolean(state.selectedFamily);
     document.body.classList.toggle(
       "is-attention-detail-open",
       returnToFamily || Boolean(state.selectedFamily),
@@ -8137,8 +7925,7 @@
 
   async function refreshAttentionAfterExpiry() {
     if (state.attentionExpiryRefresh) return;
-    const returnFocus =
-      state.issueReturnFocus || state.familyReturnFocus;
+    const returnFocus = state.issueReturnFocus || state.familyReturnFocus;
     const returnToBrief =
       Boolean(state.briefSelectionID) ||
       (returnFocus &&
@@ -8228,8 +8015,7 @@
       ? tone
       : "status";
     globalThis.clearTimeout(state.refreshNoticeTimer);
-    elements.attentionRefreshNotice.textContent =
-      experiencePageText(message);
+    elements.attentionRefreshNotice.textContent = experiencePageText(message);
     elements.attentionRefreshNotice.dataset.tone = safeTone;
     elements.attentionRefreshNotice.setAttribute(
       "role",
@@ -8326,18 +8112,15 @@
   }
 
   function issueScopeDisclosure(issue, catalogCaveat = "") {
-    const statements = [
-      readText(catalogCaveat),
-      issueCaveat(issue),
-    ].filter(Boolean);
+    const statements = [readText(catalogCaveat), issueCaveat(issue)].filter(
+      Boolean,
+    );
     return Array.from(new Set(statements)).join(" ");
   }
 
   function expectedIssueSelection(kind) {
     const attentionKind = kind === "evidence_gap" ? "evidence_gap" : "issue";
-    const experimental = state.issueFilters.experimental
-      ? "include"
-      : "stable";
+    const experimental = state.issueFilters.experimental ? "include" : "stable";
     return {
       attention_kind: attentionKind,
       experimental,
@@ -8358,10 +8141,8 @@
     if (
       selection.attention_kind !== expected.attention_kind ||
       selection.experimental !== expected.experimental ||
-      selection.includes_evidence_gaps !==
-        expected.includes_evidence_gaps ||
-      selection.includes_experimental !==
-        expected.includes_experimental
+      selection.includes_evidence_gaps !== expected.includes_evidence_gaps ||
+      selection.includes_experimental !== expected.includes_experimental
     ) {
       throw new Error(
         "Local API returned issue results for a different normalized selection.",
@@ -8379,9 +8160,7 @@
       );
     }
     if (currentCursor && nextCursor === currentCursor) {
-      throw new Error(
-        `Local API returned a non-advancing ${label} cursor.`,
-      );
+      throw new Error(`Local API returned a non-advancing ${label} cursor.`);
     }
     return { nextCursor, hasMore };
   }
@@ -8398,7 +8177,8 @@
       observation_statement: readText(value.observation_statement),
       caveat: readText(value.caveat),
       next_evidence_action: readText(value.next_evidence_action),
-      source_signal_code: safeSourceSignalCode(value.source_signal_code) || null,
+      source_signal_code:
+        safeSourceSignalCode(value.source_signal_code) || null,
       source_signal_catalog_version: readText(
         value.source_signal_catalog_version,
       ),
@@ -8442,8 +8222,7 @@
     );
     return {
       catalog_version: "browser-fallback",
-      catalog_status:
-        display.title === "Detected issue" ? "unknown" : "known",
+      catalog_status: display.title === "Detected issue" ? "unknown" : "known",
       title_code: titleCode,
       display_title: display.title,
       observation_statement: display.explanation,
@@ -8461,11 +8240,7 @@
   }
 
   function readGlobalAnalysisCoverage(value, fallback) {
-    return isRecord(value)
-      ? value
-      : isRecord(fallback)
-        ? fallback
-        : null;
+    return isRecord(value) ? value : isRecord(fallback) ? fallback : null;
   }
 
   function selectedIssueListCoverage() {
@@ -8576,7 +8351,8 @@
   function isCursorExpired(error) {
     return (
       error instanceof LocalAPIError &&
-      (error.status === 410 || error.problemType === "belay.local/cursor-expired")
+      (error.status === 410 ||
+        error.problemType === "belay.local/cursor-expired")
     );
   }
 
@@ -8596,7 +8372,9 @@
     elements.overviewSessionCount.textContent = formatNumberOrDash(
       stats.session_count,
     );
-    elements.overviewEventCount.textContent = formatNumberOrDash(stats.event_count);
+    elements.overviewEventCount.textContent = formatNumberOrDash(
+      stats.event_count,
+    );
     elements.overviewFindingCount.textContent = formatNumberOrDash(
       stats.finding_count,
     );
@@ -8608,7 +8386,10 @@
       .sort((left, right) => right[1] - left[1]);
     elements.overviewHarnesses.textContent = harnesses.length
       ? `Agents · ${harnesses
-          .map(([harness, count]) => `${displayHarness(harness)} ${formatNumber(count)}`)
+          .map(
+            ([harness, count]) =>
+              `${displayHarness(harness)} ${formatNumber(count)}`,
+          )
           .join(" · ")}`
       : "Agent activity unavailable";
     elements.overviewFreshness.textContent = parseDate(dataThrough)
@@ -8620,7 +8401,9 @@
   function updateHarnessOptions(harnesses) {
     const current = state.filters.harness;
     const known = new Set(
-      state.sessions.map((session) => readText(session.harness)).filter(Boolean),
+      state.sessions
+        .map((session) => readText(session.harness))
+        .filter(Boolean),
     );
     if (state.stats && isRecord(state.stats.harness_counts)) {
       Object.keys(state.stats.harness_counts).forEach((harness) => {
@@ -8773,11 +8556,9 @@
         `Showing ${state.sessions.length} recent sessions. ` +
         "Additional older sessions exist beyond this browser bound.";
     } else if (state.sessionHasMore) {
-      elements.sessionsPageStatus.textContent =
-        `Showing ${state.sessions.length} sessions. More are available.`;
+      elements.sessionsPageStatus.textContent = `Showing ${state.sessions.length} sessions. More are available.`;
     } else {
-      elements.sessionsPageStatus.textContent =
-        `Showing ${state.sessions.length} returned sessions.`;
+      elements.sessionsPageStatus.textContent = `Showing ${state.sessions.length} returned sessions.`;
     }
   }
 
@@ -8807,8 +8588,10 @@
       .join(" ")
       .toLocaleLowerCase();
     if (query && !searchable.includes(query)) return false;
-    if (state.filters.harness && harness !== state.filters.harness) return false;
-    if (state.filters.capture && capture !== state.filters.capture) return false;
+    if (state.filters.harness && harness !== state.filters.harness)
+      return false;
+    if (state.filters.capture && capture !== state.filters.capture)
+      return false;
     if (
       state.filters.outcome === "reported" &&
       !explicitOutcomes.has(outcome)
@@ -8832,7 +8615,10 @@
     card.classList.toggle("is-selected", sessionID === state.selectedSessionID);
     const button = createElement("button", "session-card-main");
     button.type = "button";
-    button.setAttribute("aria-pressed", String(sessionID === state.selectedSessionID));
+    button.setAttribute(
+      "aria-pressed",
+      String(sessionID === state.selectedSessionID),
+    );
     if (sessionID) focusRegistry.sessionCards.set(sessionID, button);
     button.addEventListener("click", () => {
       state.sessionReturnFocus = { type: "session", sessionID };
@@ -8840,7 +8626,11 @@
       selectSession(sessionID);
     });
     const top = createElement("span", "session-card-top");
-    const avatar = createElement("span", "harness-avatar", harnessInitial(harness));
+    const avatar = createElement(
+      "span",
+      "harness-avatar",
+      harnessInitial(harness),
+    );
     avatar.setAttribute("aria-hidden", "true");
     const title = createElement("span", "session-card-title");
     const project = readText(session.project);
@@ -8859,12 +8649,16 @@
     dot.setAttribute("aria-hidden", "true");
     top.append(dot, avatar, title, sessionOutcomeBadge(outcome));
     const meta = createElement("span", "session-card-meta");
-    meta.append(createElement("span", "", formatEventCount(session.event_count)));
+    meta.append(
+      createElement("span", "", formatEventCount(session.event_count)),
+    );
     const history = sessionHistory(session);
     meta.append(
       createElement(
         "span",
-        history === "live" ? "capture-label live" : "capture-label reconstructed",
+        history === "live"
+          ? "capture-label live"
+          : "capture-label reconstructed",
         history === "mixed"
           ? "Mixed collection"
           : history === "historical"
@@ -8872,7 +8666,11 @@
             : "Live",
       ),
     );
-    const time = createElement("time", "", formatRelativeTime(session.ended_at));
+    const time = createElement(
+      "time",
+      "",
+      formatRelativeTime(session.ended_at),
+    );
     const endedAt = parseDate(session.ended_at);
     if (endedAt) {
       time.dateTime = endedAt.toISOString();
@@ -9073,9 +8871,7 @@
   async function loadFindings(sessionID) {
     const append = arguments.length > 1 && arguments[1] === true;
     state.findingsStatus = "loading";
-    state.findingsMayHaveMore = append
-      ? state.findingHasMore
-      : true;
+    state.findingsMayHaveMore = append ? state.findingHasMore : true;
     renderFindingList();
     try {
       const cursor = append ? state.findingNextCursor : "";
@@ -9087,11 +8883,7 @@
       const response = await apiGet(`/v1/findings?${parameters.toString()}`);
       if (state.selectedSessionID !== sessionID) return;
       const page = Array.isArray(response.data) ? response.data : [];
-      if (
-        page.some(
-          (finding) => readText(finding.session_id) !== sessionID,
-        )
-      ) {
+      if (page.some((finding) => readText(finding.session_id) !== sessionID)) {
         throw new Error(
           "Local findings response did not match the selected session.",
         );
@@ -9104,7 +8896,9 @@
       state.findingHasMore =
         response.has_more === true || Boolean(state.findingNextCursor);
       if (state.findingHasMore && !state.findingNextCursor) {
-        throw new Error("Local findings response omitted its continuation cursor.");
+        throw new Error(
+          "Local findings response omitted its continuation cursor.",
+        );
       }
       state.findingsStatus = "ready";
       state.findingsMayHaveMore = state.findingHasMore;
@@ -9134,7 +8928,9 @@
     elements.eventsLoadMore.disabled = true;
     try {
       const cursor = append ? state.eventNextCursor : "";
-      const parameters = new URLSearchParams({ limit: String(state.eventLimit) });
+      const parameters = new URLSearchParams({
+        limit: String(state.eventLimit),
+      });
       if (cursor) parameters.set("cursor", cursor);
       const response = await apiGet(
         `/v1/sessions/${encodeURIComponent(sessionID)}/events?${parameters.toString()}`,
@@ -9190,8 +8986,7 @@
     elements.sessionDiagnosisLimitations.replaceChildren();
     if (
       !isRecord(diagnosis) ||
-      readText(diagnosis.projection_version) !==
-        "belay.session-diagnosis.v1" ||
+      readText(diagnosis.projection_version) !== "belay.session-diagnosis.v1" ||
       !["ready", "limited", "insufficient_detail"].includes(
         readText(diagnosis.status),
       ) ||
@@ -9253,7 +9048,8 @@
       ),
     );
     const evidence = briefEvidenceSummary(card && card.evidence);
-    if (evidence) article.append(createElement("p", "brief-evidence", evidence));
+    if (evidence)
+      article.append(createElement("p", "brief-evidence", evidence));
     const limitation = readText(card && card.limitation);
     if (limitation) {
       article.append(createElement("p", "brief-limitation", limitation));
@@ -9380,8 +9176,7 @@
         `${overview.resources.length} referenced resources returned; ` +
         "additional referenced resources were not included in this summary.";
     } else if (overview.resources.length > 12) {
-      elements.resourceDisclosure.textContent =
-        `Showing 12 of ${overview.resources.length} referenced resources.`;
+      elements.resourceDisclosure.textContent = `Showing 12 of ${overview.resources.length} referenced resources.`;
     } else {
       elements.resourceDisclosure.textContent = "";
     }
@@ -9405,14 +9200,20 @@
       container.hidden = true;
       return;
     }
-    const times = events.map((event) => parseDate(event.occurred_at)).filter(Boolean);
+    const times = events
+      .map((event) => parseDate(event.occurred_at))
+      .filter(Boolean);
     const detail = state.selectedSessionDetail || {};
     const start =
       parseDate(detail.started_at) ||
-      (times.length ? new Date(Math.min(...times.map((d) => d.getTime()))) : null);
+      (times.length
+        ? new Date(Math.min(...times.map((d) => d.getTime())))
+        : null);
     const end =
       parseDate(detail.ended_at) ||
-      (times.length ? new Date(Math.max(...times.map((d) => d.getTime()))) : null);
+      (times.length
+        ? new Date(Math.max(...times.map((d) => d.getTime())))
+        : null);
     if (!start || !end || end.getTime() <= start.getTime()) {
       container.hidden = true;
       return;
@@ -9427,12 +9228,22 @@
     events.forEach((event) => {
       const at = parseDate(event.occurred_at);
       if (!at) return;
-      const position = Math.min(1, Math.max(0, (at.getTime() - start.getTime()) / span));
-      const bin = bins[Math.min(sessionVisualBins - 1, Math.floor(position * sessionVisualBins))];
+      const position = Math.min(
+        1,
+        Math.max(0, (at.getTime() - start.getTime()) / span),
+      );
+      const bin =
+        bins[
+          Math.min(
+            sessionVisualBins - 1,
+            Math.floor(position * sessionVisualBins),
+          )
+        ];
       const observation = isRecord(event.observation) ? event.observation : {};
       const type = readText(observation.type).toLocaleLowerCase();
       const outcome = normalizeOutcome(observation.outcome);
-      if (["file.write", "file.create", "file.delete"].includes(type)) bin.edits += 1;
+      if (["file.write", "file.create", "file.delete"].includes(type))
+        bin.edits += 1;
       else if (type === "file.read" || type.startsWith("tool.")) bin.reads += 1;
       else if (type.startsWith("command.")) bin.commands += 1;
       if (type === "command.result" || type === "command.exec") {
@@ -9456,14 +9267,20 @@
         });
       }
     });
-    const peak = Math.max(1, ...bins.map((bin) => bin.edits + bin.reads + bin.commands));
+    const peak = Math.max(
+      1,
+      ...bins.map((bin) => bin.edits + bin.reads + bin.commands),
+    );
 
     const timeRow = createElement("div", "session-visual-row");
     timeRow.append(createElement("span", "session-visual-label", "Over time"));
     const timeBody = createElement("div", "session-visual-body");
     const strip = createElement("div", "session-strip");
     strip.setAttribute("role", "img");
-    strip.setAttribute("aria-label", "Activity across the session, oldest to newest");
+    strip.setAttribute(
+      "aria-label",
+      "Activity across the session, oldest to newest",
+    );
     bins.forEach((bin) => {
       const column = createElement("span", "session-strip-column");
       [
@@ -9472,7 +9289,10 @@
         ["edits", bin.edits],
       ].forEach(([kind, count]) => {
         if (!count) return;
-        const segment = createElement("span", `session-strip-segment session-strip-${kind}`);
+        const segment = createElement(
+          "span",
+          `session-strip-segment session-strip-${kind}`,
+        );
         segment.style.height = `${Math.max(2, Math.round((count / peak) * 44))}px`;
         column.append(segment);
       });
@@ -9500,7 +9320,10 @@
       ["reads", "Read or search"],
     ].forEach(([kind, label]) => {
       const item = createElement("span", "session-legend-item");
-      const swatch = createElement("span", `session-legend-swatch session-strip-${kind}`);
+      const swatch = createElement(
+        "span",
+        `session-legend-swatch session-strip-${kind}`,
+      );
       swatch.dataset.tone = kind;
       item.append(swatch, document.createTextNode(label));
       legend.append(item);
@@ -9518,7 +9341,9 @@
     timeRow.append(timeBody);
 
     const mixRow = createElement("div", "session-visual-row");
-    mixRow.append(createElement("span", "session-visual-label", "Activity mix"));
+    mixRow.append(
+      createElement("span", "session-visual-label", "Activity mix"),
+    );
     const mixBody = createElement("div", "session-visual-body session-mix");
     const parts = [
       ["Tool calls", overview.tools, "reads"],
@@ -9531,14 +9356,26 @@
       const line = createElement("div", "session-mix-line");
       line.append(createElement("span", "session-mix-label", label));
       const track = createElement("span", "session-mix-track");
-      const fill = createElement("span", `session-mix-fill session-strip-${kind}`);
+      const fill = createElement(
+        "span",
+        `session-mix-fill session-strip-${kind}`,
+      );
       fill.style.width = `${Math.max(2, Math.round((count / largest) * 100))}%`;
       track.append(fill);
-      line.append(track, createElement("span", "session-mix-count", formatNumber(count)));
+      line.append(
+        track,
+        createElement("span", "session-mix-count", formatNumber(count)),
+      );
       mixBody.append(line);
     });
     if (!parts.length) {
-      mixBody.append(createElement("p", "overview-empty", "No activity counts were reported."));
+      mixBody.append(
+        createElement(
+          "p",
+          "overview-empty",
+          "No activity counts were reported.",
+        ),
+      );
     }
     mixRow.append(mixBody);
     container.append(timeRow, mixRow);
@@ -9554,7 +9391,9 @@
         }`,
       );
     }
-    const deniedPermissions = state.events.filter(isDeniedPermissionEvent).length;
+    const deniedPermissions = state.events.filter(
+      isDeniedPermissionEvent,
+    ).length;
     if (deniedPermissions > 0) {
       attention.push(
         `${formatNumber(deniedPermissions)} denied ${
@@ -9668,7 +9507,8 @@
     if (["failed", "interrupted"].includes(outcome)) return 0;
     if (isDeniedPermissionEvent(event)) return 1;
     if (cited.has(readText(event.event_id))) return 2;
-    if (type === "command.result" && commandDisplayDetail(observation)) return 3;
+    if (type === "command.result" && commandDisplayDetail(observation))
+      return 3;
     if (type === "command.exec") return 4;
     if (["file.write", "file.create", "file.delete"].includes(type)) return 5;
     if (type === "tool.call") return 6;
@@ -9692,7 +9532,12 @@
       ? state.selectedOverview
       : {};
     return {
-      commands: overviewCount(supplied, derived.commands, "commands", "command_count"),
+      commands: overviewCount(
+        supplied,
+        derived.commands,
+        "commands",
+        "command_count",
+      ),
       tools: overviewCount(
         supplied,
         derived.tools,
@@ -9778,7 +9623,8 @@
       const resourceText = readText(resource.name) || readText(resource.kind);
       if (resourceText) resources.add(resourceText);
       const eventCoverage = isRecord(event.coverage) ? event.coverage : {};
-      if (readText(eventCoverage.depth)) coverage.add(readText(eventCoverage.depth));
+      if (readText(eventCoverage.depth))
+        coverage.add(readText(eventCoverage.depth));
       if (readText(eventCoverage.confidence)) {
         confidence.add(readText(eventCoverage.confidence));
       }
@@ -9790,9 +9636,11 @@
   }
 
   function overviewCount(overview, fallback, ...keys) {
-    const sources = [overview, overview.counts, overview.activity_counts].filter(
-      isRecord,
-    );
+    const sources = [
+      overview,
+      overview.counts,
+      overview.activity_counts,
+    ].filter(isRecord);
     for (const source of sources) {
       for (const key of keys) {
         if (Number.isFinite(Number(source[key]))) {
@@ -9816,7 +9664,10 @@
     const counts = isRecord(overview.counts) ? overview.counts : overview;
     const keys = ["file_reads", "file_writes", "file_deletes"];
     if (keys.some((key) => Number.isFinite(Number(counts[key])))) {
-      return keys.reduce((total, key) => total + toFiniteNumber(counts[key]), 0);
+      return keys.reduce(
+        (total, key) => total + toFiniteNumber(counts[key]),
+        0,
+      );
     }
     return fallback;
   }
@@ -9845,8 +9696,8 @@
   }
 
   function collectionDetailSummary(value) {
-    const rawValues = (Array.isArray(value) ? value : [value]).flatMap(
-      (item) => readText(item).split(","),
+    const rawValues = (Array.isArray(value) ? value : [value]).flatMap((item) =>
+      readText(item).split(","),
     );
     const labels = rawValues
       .map((item) => collectionDetailLabel(item))
@@ -9908,11 +9759,7 @@
     if (!state.findings.length) {
       if (state.findingsStatus === "loading") {
         fragment.append(
-          createElement(
-            "p",
-            "overview-empty",
-            "Loading session findings…",
-          ),
+          createElement("p", "overview-empty", "Loading session findings…"),
         );
       } else if (state.findingsStatus === "error") {
         fragment.append(
@@ -9947,16 +9794,13 @@
         const severity = readText(finding.severity) || "reported";
         const display = finding._display;
         const heading = createElement("div");
-        const badge = createElement("span", "finding-badge", readableLabel(severity));
-        badge.dataset.tone = severityTone(severity);
-        heading.append(
-          badge,
-          createElement(
-            "strong",
-            "",
-            display.title,
-          ),
+        const badge = createElement(
+          "span",
+          "finding-badge",
+          readableLabel(severity),
         );
+        badge.dataset.tone = severityTone(severity);
+        heading.append(badge, createElement("strong", "", display.title));
         item.append(heading);
         const evidenceCount = findingEventIDs(finding).length;
         item.append(
@@ -10008,7 +9852,10 @@
             "Some session findings could not be loaded.",
           ),
         );
-      } else if (expectedCount >= 0 && expectedCount !== state.findings.length) {
+      } else if (
+        expectedCount >= 0 &&
+        expectedCount !== state.findings.length
+      ) {
         fragment.append(
           createElement(
             "small",
@@ -10025,8 +9872,7 @@
 
   function renderFindingPagination() {
     elements.findingsPagination.hidden = !state.findingHasMore;
-    elements.findingsLoadMore.disabled =
-      state.findingsStatus === "loading";
+    elements.findingsLoadMore.disabled = state.findingsStatus === "loading";
     elements.findingsPageStatus.textContent = state.findingHasMore
       ? `Loaded ${state.findings.length} findings; more are available.`
       : `Loaded ${state.findings.length} returned findings.`;
@@ -10073,12 +9919,16 @@
 
   function renderEvents() {
     const cited = citedFindingMap();
-    const signalEvents = state.events.filter((event) => isSignalEvent(event, cited));
+    const signalEvents = state.events.filter((event) =>
+      isSignalEvent(event, cited),
+    );
     const visible = state.showAllEvents ? state.events : signalEvents;
     const hiddenCount = state.events.length - signalEvents.length;
     const fragment = document.createDocumentFragment();
     visible.forEach((event) => {
-      fragment.append(createEventRow(event, cited.get(readText(event.event_id)) || []));
+      fragment.append(
+        createEventRow(event, cited.get(readText(event.event_id)) || []),
+      );
     });
     elements.eventList.replaceChildren(fragment);
     elements.eventsEmpty.hidden =
@@ -10101,11 +9951,9 @@
         `Loaded ${state.events.length} of ${state.selectedEventTotal} events. ` +
         "Additional events exist beyond this browser bound.";
     } else if (state.eventHasMore) {
-      elements.eventsPageStatus.textContent =
-        `Loaded ${state.events.length} of ${state.selectedEventTotal} events.`;
+      elements.eventsPageStatus.textContent = `Loaded ${state.events.length} of ${state.selectedEventTotal} events.`;
     } else {
-      elements.eventsPageStatus.textContent =
-        `Loaded ${state.events.length} events returned for this session.`;
+      elements.eventsPageStatus.textContent = `Loaded ${state.events.length} events returned for this session.`;
     }
   }
 
@@ -10136,7 +9984,11 @@
     const heading = createElement("div", "event-heading");
     heading.append(createElement("strong", "", descriptor.label));
     if (explicitOutcomes.has(outcome)) {
-      const badge = createElement("span", "status-badge", explicitOutcomeLabel(outcome));
+      const badge = createElement(
+        "span",
+        "status-badge",
+        explicitOutcomeLabel(outcome),
+      );
       badge.dataset.tone = outcome;
       heading.append(badge);
     }
@@ -10155,11 +10007,7 @@
     }
     if (outcome === "unknown") {
       card.append(
-        createElement(
-          "p",
-          "outcome-unreported",
-          "Outcome · Not reported",
-        ),
+        createElement("p", "outcome-unreported", "Outcome · Not reported"),
       );
     }
     if (findings.length) {
@@ -10167,11 +10015,7 @@
       findings.forEach((finding) => {
         const display = findingDisplayCatalog(finding);
         findingRefs.append(
-          createElement(
-            "span",
-            "",
-            `Cited by ${display.title}`,
-          ),
+          createElement("span", "", `Cited by ${display.title}`),
         );
       });
       card.append(findingRefs);
@@ -10192,7 +10036,11 @@
     details.append(createElement("summary", "", "Evidence"));
     const list = createElement("dl");
     appendEvidence(list, "Event ID", event.event_id);
-    appendEvidence(list, "Occurred", formatFullDate(parseDate(event.occurred_at)));
+    appendEvidence(
+      list,
+      "Occurred",
+      formatFullDate(parseDate(event.occurred_at)),
+    );
     appendEvidence(list, "Action", descriptor.label);
     appendEvidence(list, "Event type", observation.type);
     appendEvidence(list, "Outcome", observation.outcome);
@@ -10213,15 +10061,14 @@
     if (observation.exit_code !== undefined && observation.exit_code !== null) {
       appendEvidence(list, "Exit code", observation.exit_code);
     }
-    if (observation.duration_ms !== undefined && observation.duration_ms !== null) {
+    if (
+      observation.duration_ms !== undefined &&
+      observation.duration_ms !== null
+    ) {
       appendEvidence(list, "Duration (ms)", observation.duration_ms);
     }
     appendEvidence(list, "Fields removed", redaction.fields_removed);
-    appendEvidence(
-      list,
-      "Detected secrets removed",
-      redaction.secrets_removed,
-    );
+    appendEvidence(list, "Detected secrets removed", redaction.secrets_removed);
     details.append(list);
     return details;
   }
@@ -10265,11 +10112,10 @@
     const label = reducedApprovalEvidence
       ? "Fewer approval prompts enabled"
       : labels[type] || readableLabel(observation.action, "Activity");
-    const detail =
-      reducedApprovalEvidence
-        ? "Belay recorded a setting that lets actions already permitted by the agent run without asking for approval each time."
-        : type === "config.agent"
-          ? resourceName || "Agent configuration metadata was reported."
+    const detail = reducedApprovalEvidence
+      ? "Belay recorded a setting that lets actions already permitted by the agent run without asking for approval each time."
+      : type === "config.agent"
+        ? resourceName || "Agent configuration metadata was reported."
         : type.startsWith("command.")
           ? commandDisplayDetail(observation)
           : resourceName || summary;
@@ -10309,11 +10155,14 @@
     if (type === "command.result") {
       return Boolean(commandDisplayDetail(observation));
     }
-    return (
-      ["session.", "command.", "tool.", "file.", "permission.", "network."].some(
-        (prefix) => type.startsWith(prefix),
-      )
-    );
+    return [
+      "session.",
+      "command.",
+      "tool.",
+      "file.",
+      "permission.",
+      "network.",
+    ].some((prefix) => type.startsWith(prefix));
   }
 
   function citedFindingMap() {
@@ -10643,11 +10492,7 @@
   }
 
   function closeUpdateDialog(restoreFocus) {
-    closeModalLayer(
-      "update",
-      elements.updateModalLayer,
-      restoreFocus,
-    );
+    closeModalLayer("update", elements.updateModalLayer, restoreFocus);
   }
 
   async function submitUpdateAction(action) {
@@ -10713,7 +10558,10 @@
         }
       }
       globalThis.history.replaceState(
-        { ...historyState, belayToken: fromFragment || fromConfig || fromHistory },
+        {
+          ...historyState,
+          belayToken: fromFragment || fromConfig || fromHistory,
+        },
         document.title,
         `${globalThis.location.pathname}${globalThis.location.search}`,
       );
@@ -10821,7 +10669,9 @@
     card.dataset.sessionKey = readText(session.session_key);
     const header = createElement("header", "report-habit-header");
     const identity = createElement("div");
-    identity.appendChild(createElement("h3", "", readText(session.project) || "Untitled project"));
+    identity.appendChild(
+      createElement("h3", "", readText(session.project) || "Untitled project"),
+    );
     const finished = parseDate(session.ended_at || session.started_at);
     identity.appendChild(
       createElement(
@@ -10829,7 +10679,9 @@
         "habits-card-meta",
         [
           displayHarness(session.agent),
-          finished && finished.getFullYear() > 2000 ? formatRelativeTime(finished) : "",
+          finished && finished.getFullYear() > 2000
+            ? formatRelativeTime(finished)
+            : "",
           habitsDuration(session.duration_ms),
           habitsDollars(session.cost_usd),
         ]
@@ -10852,10 +10704,16 @@
       if (harness.available) {
         pending.appendChild(createElement("span", "spinner"));
         pending.appendChild(
-          createElement("p", "", `Being written by your ${habitsHarnessLabel(harness.name)}…`),
+          createElement(
+            "p",
+            "",
+            `Being written by your ${habitsHarnessLabel(harness.name)}…`,
+          ),
         );
       } else {
-        pending.appendChild(createElement("p", "", "No harness installed to write this debrief."));
+        pending.appendChild(
+          createElement("p", "", "No harness installed to write this debrief."),
+        );
       }
       card.appendChild(pending);
       return card;
@@ -10873,18 +10731,24 @@
           "span",
           `habits-phase-segment habits-phase-${habitsPhaseVerdict(phase.verdict)}`,
         );
-        segment.style.flexGrow = String(total > 0 ? Math.max(span > 0 ? span : 0, total * 0.03) : 1);
+        segment.style.flexGrow = String(
+          total > 0 ? Math.max(span > 0 ? span : 0, total * 0.03) : 1,
+        );
         segment.title = `${readText(phase.label)} · ${habitsPhaseLabel(habitsPhaseVerdict(phase.verdict))}`;
         bar.appendChild(segment);
       });
       card.appendChild(bar);
     }
-    card.appendChild(createElement("p", "report-habit-headline", readText(debrief.headline)));
+    card.appendChild(
+      createElement("p", "report-habit-headline", readText(debrief.headline)),
+    );
     const lead = debrief.insights[0];
     if (lead) {
       const insight = createElement("div", "report-habit-insight");
       const title = createElement("p", "report-habit-insight-title");
-      title.appendChild(createElement("span", "habits-kind", habitsInsightLabel(lead.kind)));
+      title.appendChild(
+        createElement("span", "habits-kind", habitsInsightLabel(lead.kind)),
+      );
       title.appendChild(document.createTextNode(readText(lead.title)));
       insight.appendChild(title);
       const message = readText(lead.say_this_instead);
@@ -10899,10 +10763,16 @@
         "span",
         "",
         `${debrief.insights.length} ${debrief.insights.length === 1 ? "insight" : "insights"}` +
-          (debrief.keep_doing.length ? ` · ${debrief.keep_doing.length} kept` : ""),
+          (debrief.keep_doing.length
+            ? ` · ${debrief.keep_doing.length} kept`
+            : ""),
       ),
     );
-    const open = createElement("button", "text-button", "Read the full debrief");
+    const open = createElement(
+      "button",
+      "text-button",
+      "Read the full debrief",
+    );
     open.type = "button";
     open.addEventListener("click", () => {
       setActiveView("habits", true);
@@ -10919,7 +10789,9 @@
     let attentionMinutes = 0;
     readySessions.forEach((session) => {
       const debrief = session.debrief.debrief;
-      const kinds = new Set(debrief.insights.map((insight) => habitsInsightKind(insight.kind)));
+      const kinds = new Set(
+        debrief.insights.map((insight) => habitsInsightKind(insight.kind)),
+      );
       kinds.forEach((kind) => counts.set(kind, (counts.get(kind) || 0) + 1));
       debrief.phases.forEach((phase) => {
         const verdict = habitsPhaseVerdict(phase.verdict);
@@ -10938,7 +10810,11 @@
     const fragment = document.createDocumentFragment();
     const wasted = createElement("div", "report-habit-stat");
     wasted.appendChild(
-      createElement("strong", "", `${attentionPhases} ${attentionPhases === 1 ? "phase" : "phases"}`),
+      createElement(
+        "strong",
+        "",
+        `${attentionPhases} ${attentionPhases === 1 ? "phase" : "phases"}`,
+      ),
     );
     wasted.appendChild(
       createElement(
@@ -10955,9 +10831,15 @@
       .slice(0, 3)
       .forEach(([kind, count]) => {
         const chip = createElement("div", "report-habit-stat");
-        chip.appendChild(createElement("strong", "", `${count} of ${readySessions.length}`));
         chip.appendChild(
-          createElement("span", "", `${readySessions.length === 1 ? "session" : "sessions"} raised a ${habitsInsightLabel(kind).toLowerCase()} habit`),
+          createElement("strong", "", `${count} of ${readySessions.length}`),
+        );
+        chip.appendChild(
+          createElement(
+            "span",
+            "",
+            `${readySessions.length === 1 ? "session" : "sessions"} raised a ${habitsInsightLabel(kind).toLowerCase()} habit`,
+          ),
         );
         fragment.appendChild(chip);
       });
@@ -11007,8 +10889,12 @@
       .filter(isRecord)
       .map((session) => ({
         ...session,
-        signals: Array.isArray(session.signals) ? session.signals.filter(isRecord).slice(0, 5) : [],
-        findings: Array.isArray(session.findings) ? session.findings.filter(isRecord).slice(0, 3) : [],
+        signals: Array.isArray(session.signals)
+          ? session.signals.filter(isRecord).slice(0, 5)
+          : [],
+        findings: Array.isArray(session.findings)
+          ? session.findings.filter(isRecord).slice(0, 3)
+          : [],
         debrief: requireHabitsDebrief(session.debrief),
         debrief_status: readText(session.debrief_status) || "missing",
       }));
@@ -11016,7 +10902,10 @@
       ? response.limitations.filter((note) => typeof note === "string" && note)
       : [];
     const harness = isRecord(response.harness)
-      ? { available: response.harness.available === true, name: readText(response.harness.name) }
+      ? {
+          available: response.harness.available === true,
+          name: readText(response.harness.name),
+        }
       : { available: false, name: "" };
     return { ...response, sessions, limitations, harness };
   }
@@ -11029,10 +10918,18 @@
       ...value,
       debrief: {
         ...debrief,
-        phases: Array.isArray(debrief.phases) ? debrief.phases.filter(isRecord).slice(0, 6) : [],
-        insights: Array.isArray(debrief.insights) ? debrief.insights.filter(isRecord).slice(0, 5) : [],
-        keep_doing: Array.isArray(debrief.keep_doing) ? debrief.keep_doing.filter(isRecord).slice(0, 3) : [],
-        prompt_length_read: isRecord(debrief.prompt_length_read) ? debrief.prompt_length_read : null,
+        phases: Array.isArray(debrief.phases)
+          ? debrief.phases.filter(isRecord).slice(0, 6)
+          : [],
+        insights: Array.isArray(debrief.insights)
+          ? debrief.insights.filter(isRecord).slice(0, 5)
+          : [],
+        keep_doing: Array.isArray(debrief.keep_doing)
+          ? debrief.keep_doing.filter(isRecord).slice(0, 3)
+          : [],
+        prompt_length_read: isRecord(debrief.prompt_length_read)
+          ? debrief.prompt_length_read
+          : null,
       },
       sanitization: Array.isArray(value.sanitization)
         ? value.sanitization.filter((note) => typeof note === "string")
@@ -11051,7 +10948,9 @@
 
   function habitsSelectedSession(sessions) {
     const key = readText(state.habitsSelectedKey);
-    const match = sessions.find((session) => readText(session.session_key) === key);
+    const match = sessions.find(
+      (session) => readText(session.session_key) === key,
+    );
     return match || sessions[0] || null;
   }
 
@@ -11108,7 +11007,8 @@
       Number.isFinite(older) && older > 0
         ? `${older} older ${older === 1 ? "session" : "sessions"}`
         : "";
-    elements.habitsDebriefAll.hidden = !insights.harness.available || missing.length === 0;
+    elements.habitsDebriefAll.hidden =
+      !insights.harness.available || missing.length === 0;
     elements.habitsDebriefAll.disabled = habitsBatchRunning;
     elements.habitsDebriefAll.textContent = habitsBatchRunning
       ? "Writing…"
@@ -11117,7 +11017,9 @@
         : `Write ${missing.length} remaining debriefs`;
     elements.habitsDetail.replaceChildren();
     if (selected) {
-      elements.habitsDetail.appendChild(renderHabitsDetail(selected, insights.harness));
+      elements.habitsDetail.appendChild(
+        renderHabitsDetail(selected, insights.harness),
+      );
     }
     const notes = document.createDocumentFragment();
     insights.limitations.forEach((note) => {
@@ -11141,7 +11043,9 @@
 
   function habitsWhen(session) {
     const finished = parseDate(session.ended_at || session.started_at);
-    return finished && finished.getFullYear() > 2000 ? formatRelativeTime(finished) : "";
+    return finished && finished.getFullYear() > 2000
+      ? formatRelativeTime(finished)
+      : "";
   }
 
   function habitsOutcomeDot(outcome) {
@@ -11163,14 +11067,29 @@
     item.dataset.sessionKey = key;
     if (active) item.setAttribute("aria-current", "true");
     const head = createElement("span", "habits-rail-head");
-    head.appendChild(createElement("span", `habits-dot habits-dot-${habitsOutcomeDot(session.outcome)}`));
-    head.appendChild(createElement("span", "habits-rail-project", readText(session.project) || "Untitled project"));
+    head.appendChild(
+      createElement(
+        "span",
+        `habits-dot habits-dot-${habitsOutcomeDot(session.outcome)}`,
+      ),
+    );
+    head.appendChild(
+      createElement(
+        "span",
+        "habits-rail-project",
+        readText(session.project) || "Untitled project",
+      ),
+    );
     item.appendChild(head);
     item.appendChild(
       createElement(
         "span",
         "habits-rail-meta",
-        [habitsDuration(session.duration_ms), habitsDollars(session.cost_usd), habitsWhen(session)]
+        [
+          habitsDuration(session.duration_ms),
+          habitsDollars(session.cost_usd),
+          habitsWhen(session),
+        ]
           .filter(Boolean)
           .join(" · "),
       ),
@@ -11206,20 +11125,26 @@
     try {
       const path = `/v1/user-insights/${encodeURIComponent(key)}/debrief?generate=1${refresh ? "&refresh=1" : ""}`;
       const response = await apiGet(path);
-      const record = isRecord(response) ? requireHabitsDebrief(response.data) : null;
+      const record = isRecord(response)
+        ? requireHabitsDebrief(response.data)
+        : null;
       if (!record) throw new Error("Local API returned an invalid debrief.");
       if (state.userInsights) {
-        state.userInsights.sessions = state.userInsights.sessions.map((session) =>
-          readText(session.session_key) === key
-            ? { ...session, debrief: record, debrief_status: "ready" }
-            : session,
+        state.userInsights.sessions = state.userInsights.sessions.map(
+          (session) =>
+            readText(session.session_key) === key
+              ? { ...session, debrief: record, debrief_status: "ready" }
+              : session,
         );
       }
       return true;
     } catch (error) {
       habitsCardErrors.set(
         key,
-        customerErrorMessage(error, "Your harness did not return a debrief. Try again."),
+        customerErrorMessage(
+          error,
+          "Your harness did not return a debrief. Try again.",
+        ),
       );
       return false;
     } finally {
@@ -11234,7 +11159,9 @@
     renderUserInsights();
     try {
       const pending = state.userInsights.sessions
-        .filter((session) => !session.debrief || session.debrief_status !== "ready")
+        .filter(
+          (session) => !session.debrief || session.debrief_status !== "ready",
+        )
         .map((session) => readText(session.session_key));
       for (const key of pending) {
         if (state.activeView !== "habits") break;
@@ -11250,13 +11177,15 @@
     const m = isRecord(session.measurements) ? session.measurements : {};
     const parts = [];
     const user = Number(m.user_turns);
-    if (Number.isFinite(user) && user > 0) parts.push(`${user} messages from you`);
+    if (Number.isFinite(user) && user > 0)
+      parts.push(`${user} messages from you`);
     const edits = Number(m.file_change_turns);
     parts.push(edits > 0 ? `${edits} file edits` : "no file edits seen");
     const checks = Number(m.verification_runs);
     parts.push(checks > 0 ? `${checks} checks run` : "no checks run");
     const corrections = Number(m.corrections);
-    if (Number.isFinite(corrections) && corrections > 0) parts.push(`${corrections} corrections`);
+    if (Number.isFinite(corrections) && corrections > 0)
+      parts.push(`${corrections} corrections`);
     return `${parts.join(" · ")}.`;
   }
 
@@ -11269,8 +11198,19 @@
 
     const header = createElement("header", "habits-detail-header");
     const meta = createElement("p", "habits-detail-meta");
-    meta.appendChild(createElement("span", `habits-dot habits-dot-${habitsOutcomeDot(session.outcome)}`));
-    meta.appendChild(createElement("strong", "", readText(session.project) || "Untitled project"));
+    meta.appendChild(
+      createElement(
+        "span",
+        `habits-dot habits-dot-${habitsOutcomeDot(session.outcome)}`,
+      ),
+    );
+    meta.appendChild(
+      createElement(
+        "strong",
+        "",
+        readText(session.project) || "Untitled project",
+      ),
+    );
     meta.appendChild(
       document.createTextNode(
         " · " +
@@ -11287,7 +11227,11 @@
     );
     header.appendChild(meta);
     if (record && harness.available && !generating) {
-      const rewrite = createElement("button", "text-button habits-rewrite", "Rewrite debrief");
+      const rewrite = createElement(
+        "button",
+        "text-button habits-rewrite",
+        "Rewrite debrief",
+      );
       rewrite.type = "button";
       rewrite.addEventListener("click", () => {
         void generateHabitsDebrief(key, true);
@@ -11392,7 +11336,8 @@
         summary: readText(signal.summary),
         next: "",
         turns:
-          Number.isInteger(Number(signal.first_turn)) && Number.isInteger(Number(signal.last_turn))
+          Number.isInteger(Number(signal.first_turn)) &&
+          Number.isInteger(Number(signal.last_turn))
             ? `Turns ${Number(signal.first_turn)}–${Number(signal.last_turn)}`
             : "",
       })),
@@ -11417,20 +11362,40 @@
         ),
       );
     } else {
-      section.appendChild(createElement("p", "habits-deterministic-label", "Available immediately from local evidence"));
+      section.appendChild(
+        createElement(
+          "p",
+          "habits-deterministic-label",
+          "Available immediately from local evidence",
+        ),
+      );
       const list = createElement("div", "habits-deterministic-list");
       items.forEach((item) => {
         const card = createElement("article", "habits-deterministic-card");
         card.appendChild(createElement("h3", "", item.title));
         card.appendChild(createElement("p", "", item.summary));
-        if (item.next) card.appendChild(createElement("p", "habits-deterministic-next", `Next time: ${item.next}`));
-        if (item.turns) card.appendChild(createElement("p", "habits-deterministic-evidence", item.turns));
+        if (item.next)
+          card.appendChild(
+            createElement(
+              "p",
+              "habits-deterministic-next",
+              `Next time: ${item.next}`,
+            ),
+          );
+        if (item.turns)
+          card.appendChild(
+            createElement("p", "habits-deterministic-evidence", item.turns),
+          );
         list.appendChild(card);
       });
       section.appendChild(list);
     }
 
-    const evidence = createElement("button", "text-button", "Open session evidence");
+    const evidence = createElement(
+      "button",
+      "text-button",
+      "Open session evidence",
+    );
     evidence.type = "button";
     evidence.addEventListener("click", () => {
       setActiveView("sessions", true);
@@ -11465,7 +11430,10 @@
         attentionMinutes += habitsPhaseSpan(phase);
       }
     });
-    const spent = debrief.insights.reduce((sum, insight) => sum + habitsInsightDollars(insight), 0);
+    const spent = debrief.insights.reduce(
+      (sum, insight) => sum + habitsInsightDollars(insight),
+      0,
+    );
     const total = Number(session.cost_usd);
     const row = createElement("div", "habits-stats");
     const stat = (value, label, note = "") => {
@@ -11513,7 +11481,9 @@
       .filter((span) => span > 0);
     const total = spans.reduce((sum, span) => sum + span, 0);
     const details = createElement("details", "habits-time-explanation");
-    details.appendChild(createElement("summary", "", "How the time span is calculated"));
+    details.appendChild(
+      createElement("summary", "", "How the time span is calculated"),
+    );
     details.appendChild(
       createElement(
         "p",
@@ -11537,9 +11507,16 @@
     const block = createElement("section", "habits-timeline");
     block.setAttribute("aria-label", "Where the session's time went");
     const phases = debrief.phases;
-    const phaseEnd = phases.reduce((max, phase) => Math.max(max, Number(phase.to_minute) || 0), 0);
+    const phaseEnd = phases.reduce(
+      (max, phase) => Math.max(max, Number(phase.to_minute) || 0),
+      0,
+    );
     const durationMinutes = Number(session.duration_ms) / 60000;
-    const total = Math.max(phaseEnd, Number.isFinite(durationMinutes) ? durationMinutes : 0, 1);
+    const total = Math.max(
+      phaseEnd,
+      Number.isFinite(durationMinutes) ? durationMinutes : 0,
+      1,
+    );
     const track = createElement("div", "habits-track");
     const bar = createElement("div", "habits-phase-bar");
     phases.forEach((phase) => {
@@ -11547,7 +11524,9 @@
         "span",
         `habits-phase-segment habits-phase-${habitsPhaseVerdict(phase.verdict)}`,
       );
-      segment.style.flexGrow = String(Math.max(habitsPhaseSpan(phase), total * 0.02));
+      segment.style.flexGrow = String(
+        Math.max(habitsPhaseSpan(phase), total * 0.02),
+      );
       segment.title = `${readText(phase.label)} · ${habitsMinutes(habitsPhaseSpan(phase))}`;
       bar.appendChild(segment);
     });
@@ -11556,11 +11535,18 @@
     debrief.insights.forEach((insight, index) => {
       const at = Number(insight.at_minute);
       if (!Number.isFinite(at) || at < 0) return;
-      const marker = createElement("button", "habits-marker", String(index + 1));
+      const marker = createElement(
+        "button",
+        "habits-marker",
+        String(index + 1),
+      );
       marker.type = "button";
       marker.style.left = `${Math.min(100, (at / total) * 100)}%`;
       marker.title = readText(insight.title);
-      marker.setAttribute("aria-label", `Insight ${index + 1}: ${readText(insight.title)}`);
+      marker.setAttribute(
+        "aria-label",
+        `Insight ${index + 1}: ${readText(insight.title)}`,
+      );
       marker.addEventListener("click", () => {
         state.habitsTab = "change";
         state.habitsOpenInsight = index;
@@ -11569,7 +11555,11 @@
       markers.appendChild(marker);
     });
     if (readText(session.outcome) === "verified_pass") {
-      const done = createElement("span", "habits-marker habits-marker-done", "✓");
+      const done = createElement(
+        "span",
+        "habits-marker habits-marker-done",
+        "✓",
+      );
       done.style.left = "100%";
       done.title = "Checks passed";
       markers.appendChild(done);
@@ -11591,19 +11581,29 @@
     });
     ticks.push(total);
     ticks.forEach((minute, index) => {
-      const tick = createElement("span", "habits-axis-tick", index === 0 ? "0" : habitsMinutes(minute));
+      const tick = createElement(
+        "span",
+        "habits-axis-tick",
+        index === 0 ? "0" : habitsMinutes(minute),
+      );
       tick.style.left = `${(minute / total) * 100}%`;
-      if (index === ticks.length - 1) tick.classList.add("habits-axis-tick-end");
+      if (index === ticks.length - 1)
+        tick.classList.add("habits-axis-tick-end");
       axis.appendChild(tick);
     });
     track.appendChild(axis);
     block.appendChild(track);
     const legend = createElement("ul", "habits-legend");
     phases.forEach((phase) => {
-      const item = createElement("li", `habits-legend-item habits-phase-${habitsPhaseVerdict(phase.verdict)}`);
+      const item = createElement(
+        "li",
+        `habits-legend-item habits-phase-${habitsPhaseVerdict(phase.verdict)}`,
+      );
       item.appendChild(createElement("span", "habits-legend-swatch"));
       item.appendChild(
-        document.createTextNode(`${readText(phase.label)} · ${habitsMinutes(habitsPhaseSpan(phase))}`),
+        document.createTextNode(
+          `${readText(phase.label)} · ${habitsMinutes(habitsPhaseSpan(phase))}`,
+        ),
       );
       item.title = readText(phase.what_happened);
       legend.appendChild(item);
@@ -11623,7 +11623,9 @@
     const wrap = createElement("div", "habits-tabs-wrap");
     const list = createElement("div", "habits-tabs");
     list.setAttribute("role", "tablist");
-    const active = habitsTabs.some((tab) => tab.id === state.habitsTab) ? state.habitsTab : "change";
+    const active = habitsTabs.some((tab) => tab.id === state.habitsTab)
+      ? state.habitsTab
+      : "change";
     habitsTabs.forEach((tab) => {
       const count =
         tab.id === "change"
@@ -11634,8 +11636,14 @@
       const button = createElement("button", "habits-tab", tab.label);
       button.type = "button";
       button.setAttribute("role", "tab");
-      button.setAttribute("aria-selected", tab.id === active ? "true" : "false");
-      if (count) button.appendChild(createElement("span", "habits-tab-count", ` · ${count}`));
+      button.setAttribute(
+        "aria-selected",
+        tab.id === active ? "true" : "false",
+      );
+      if (count)
+        button.appendChild(
+          createElement("span", "habits-tab-count", ` · ${count}`),
+        );
       button.addEventListener("click", () => {
         state.habitsTab = tab.id;
         renderUserInsights();
@@ -11647,16 +11655,34 @@
     panel.setAttribute("role", "tabpanel");
     if (active === "change") {
       debrief.insights.forEach((insight, index) => {
-        panel.appendChild(renderHabitsInsight(insight, index, index === state.habitsOpenInsight));
+        panel.appendChild(
+          renderHabitsInsight(
+            insight,
+            index,
+            index === state.habitsOpenInsight,
+          ),
+        );
       });
       if (!debrief.insights.length) {
-        panel.appendChild(createElement("p", "habits-quiet", "Nothing to change in this session."));
+        panel.appendChild(
+          createElement(
+            "p",
+            "habits-quiet",
+            "Nothing to change in this session.",
+          ),
+        );
       }
     } else if (active === "message") {
       panel.appendChild(renderHabitsPromptLength(debrief.prompt_length_read));
     } else if (active === "well") {
       if (!debrief.keep_doing.length) {
-        panel.appendChild(createElement("p", "habits-quiet", "The debrief did not single anything out here."));
+        panel.appendChild(
+          createElement(
+            "p",
+            "habits-quiet",
+            "The debrief did not single anything out here.",
+          ),
+        );
       }
       debrief.keep_doing.forEach((item) => {
         const block = createElement("section", "habits-keep-item");
@@ -11664,18 +11690,36 @@
         heading.appendChild(createElement("span", "habits-dot habits-dot-ok"));
         heading.appendChild(document.createTextNode(readText(item.title)));
         block.appendChild(heading);
-        if (readText(item.why)) block.appendChild(createElement("p", "", readText(item.why)));
-        const turns = Array.isArray(item.evidence_turns) ? item.evidence_turns.filter((v) => Number.isFinite(Number(v))) : [];
-        if (turns.length) block.appendChild(createElement("p", "habits-foot", `Turns ${turns.join(", ")}`));
+        if (readText(item.why))
+          block.appendChild(createElement("p", "", readText(item.why)));
+        const turns = Array.isArray(item.evidence_turns)
+          ? item.evidence_turns.filter((v) => Number.isFinite(Number(v)))
+          : [];
+        if (turns.length)
+          block.appendChild(
+            createElement("p", "habits-foot", `Turns ${turns.join(", ")}`),
+          );
         panel.appendChild(block);
       });
     } else {
       const opener = readText(debrief.next_session_opener);
       if (opener) {
-        panel.appendChild(createElement("p", "habits-lead", "Open your next session in this project with:"));
+        panel.appendChild(
+          createElement(
+            "p",
+            "habits-lead",
+            "Open your next session in this project with:",
+          ),
+        );
         panel.appendChild(habitsQuote(opener, "Copy opening"));
       } else {
-        panel.appendChild(createElement("p", "habits-quiet", "No opening message was suggested for this session."));
+        panel.appendChild(
+          createElement(
+            "p",
+            "habits-quiet",
+            "No opening message was suggested for this session.",
+          ),
+        );
       }
     }
     wrap.appendChild(panel);
@@ -11683,16 +11727,24 @@
   }
 
   function renderHabitsInsight(insight, index, open) {
-    const block = createElement("section", `habits-insight${open ? " habits-insight-open" : ""}`);
+    const block = createElement(
+      "section",
+      `habits-insight${open ? " habits-insight-open" : ""}`,
+    );
     const toggle = createElement("button", "habits-insight-toggle");
     toggle.type = "button";
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
-    toggle.appendChild(createElement("span", "habits-insight-number", String(index + 1)));
+    toggle.appendChild(
+      createElement("span", "habits-insight-number", String(index + 1)),
+    );
     const titleWrap = createElement("span", "habits-insight-title");
     titleWrap.appendChild(createElement("span", "", readText(insight.title)));
     if (!open) {
       const preview = readText(insight.what_you_did);
-      if (preview) titleWrap.appendChild(createElement("span", "habits-insight-preview", preview));
+      if (preview)
+        titleWrap.appendChild(
+          createElement("span", "habits-insight-preview", preview),
+        );
     }
     toggle.appendChild(titleWrap);
     const cost = [];
@@ -11700,8 +11752,12 @@
     if (minutes >= 1) cost.push(habitsMinutes(minutes));
     const dollars = habitsInsightDollars(insight);
     if (dollars >= 0.5) cost.push(`~${formatReportDollars(dollars)}`);
-    toggle.appendChild(createElement("span", "habits-insight-cost", cost.join(" · ")));
-    toggle.appendChild(createElement("span", "habits-chevron", open ? "⌃" : "⌄"));
+    toggle.appendChild(
+      createElement("span", "habits-insight-cost", cost.join(" · ")),
+    );
+    toggle.appendChild(
+      createElement("span", "habits-chevron", open ? "⌃" : "⌄"),
+    );
     toggle.addEventListener("click", () => {
       state.habitsOpenInsight = open ? -1 : index;
       renderUserInsights();
@@ -11722,26 +11778,40 @@
     body.appendChild(grid);
     if (readText(insight.what_it_cost)) {
       const costLine = createElement("p", "habits-cost-line");
-      costLine.appendChild(createElement("span", "habits-label-inline", "What it cost: "));
-      costLine.appendChild(document.createTextNode(readText(insight.what_it_cost)));
+      costLine.appendChild(
+        createElement("span", "habits-label-inline", "What it cost: "),
+      );
+      costLine.appendChild(
+        document.createTextNode(readText(insight.what_it_cost)),
+      );
       body.appendChild(costLine);
     }
     const message = readText(insight.say_this_instead);
     if (message) {
-      body.appendChild(createElement("span", "habits-label", "Say this instead"));
+      body.appendChild(
+        createElement("span", "habits-label", "Say this instead"),
+      );
       body.appendChild(habitsQuote(message, "Copy message"));
     }
     const foot = createElement("div", "habits-insight-foot");
     const turns = Array.isArray(insight.evidence_turns)
       ? insight.evidence_turns.filter((value) => Number.isFinite(Number(value)))
       : [];
-    foot.appendChild(createElement("span", "", turns.length ? `Turns ${turns.join(", ")}` : ""));
+    foot.appendChild(
+      createElement(
+        "span",
+        "",
+        turns.length ? `Turns ${turns.join(", ")}` : "",
+      ),
+    );
     const confidence = Number(insight.confidence);
     foot.appendChild(
       createElement(
         "span",
         "",
-        Number.isFinite(confidence) && confidence > 0 ? `${Math.round(confidence * 100)}% confident` : "",
+        Number.isFinite(confidence) && confidence > 0
+          ? `${Math.round(confidence * 100)}% confident`
+          : "",
       ),
     );
     body.appendChild(foot);
@@ -11752,7 +11822,13 @@
   function renderHabitsPromptLength(read) {
     const block = createElement("section", "habits-length");
     if (!isRecord(read)) {
-      block.appendChild(createElement("p", "habits-quiet", "The debrief did not judge the first message."));
+      block.appendChild(
+        createElement(
+          "p",
+          "habits-quiet",
+          "The debrief did not judge the first message.",
+        ),
+      );
       return block;
     }
     const verdict = readText(read.verdict);
@@ -11778,7 +11854,13 @@
     }
     const rewrite = readText(read.rewrite);
     if (rewrite && verdict !== "about_right") {
-      block.appendChild(createElement("span", "habits-label", "The version that would have worked"));
+      block.appendChild(
+        createElement(
+          "span",
+          "habits-label",
+          "The version that would have worked",
+        ),
+      );
       block.appendChild(habitsQuote(rewrite, "Copy rewrite"));
     }
     return block;
@@ -11813,7 +11895,10 @@
     rect.setAttribute("height", "12");
     rect.setAttribute("rx", "2");
     const path = document.createElementNS(ns, "path");
-    path.setAttribute("d", "M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4");
+    path.setAttribute(
+      "d",
+      "M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4",
+    );
     svg.appendChild(rect);
     svg.appendChild(path);
     return svg;
@@ -11821,7 +11906,9 @@
 
   function habitsPhaseVerdict(value) {
     const verdict = readText(value);
-    return ["productive", "partly_wasted", "wasted", "unclear"].includes(verdict)
+    return ["productive", "partly_wasted", "wasted", "unclear"].includes(
+      verdict,
+    )
       ? verdict.replace(/_/g, "-")
       : "unclear";
   }
@@ -11841,7 +11928,15 @@
 
   function habitsInsightKind(value) {
     const kind = readText(value);
-    return ["prompting", "scoping", "verification", "delegation", "context", "workflow", "review"].includes(kind)
+    return [
+      "prompting",
+      "scoping",
+      "verification",
+      "delegation",
+      "context",
+      "workflow",
+      "review",
+    ].includes(kind)
       ? kind
       : "workflow";
   }
@@ -11916,9 +12011,12 @@
 
   function habitsOutcomeClass(value) {
     const outcome = readText(value);
-    return ["verified_pass", "verified_fail", "unverified_changes", "no_changes"].includes(
-      outcome,
-    )
+    return [
+      "verified_pass",
+      "verified_fail",
+      "unverified_changes",
+      "no_changes",
+    ].includes(outcome)
       ? outcome.replace(/_/g, "-")
       : "unknown";
   }
@@ -11940,7 +12038,8 @@
 
   function readText(value) {
     if (typeof value === "string") return value;
-    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (typeof value === "number" && Number.isFinite(value))
+      return String(value);
     return "";
   }
 
@@ -12013,7 +12112,9 @@
 
   function normalizeOutcome(value) {
     const outcome = readText(value).toLocaleLowerCase();
-    return ["succeeded", "failed", "interrupted", "incomplete"].includes(outcome)
+    return ["succeeded", "failed", "interrupted", "incomplete"].includes(
+      outcome,
+    )
       ? outcome
       : "unknown";
   }
